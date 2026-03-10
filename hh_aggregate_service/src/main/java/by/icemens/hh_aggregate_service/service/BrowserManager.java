@@ -130,28 +130,4 @@ public class BrowserManager implements AutoCloseable {
             context.close();
         }
     }
-    
-    /**
-     * Страница для интерактивного режима.
-     */
-    public static class InteractivePage implements AutoCloseable {
-        public final Playwright playwright;
-        public final Browser browser;
-        public final BrowserContext context;
-        public final Page page;
-        
-        public InteractivePage(Playwright playwright, Browser browser, 
-                               BrowserContext context, Page page) {
-            this.playwright = playwright;
-            this.browser = browser;
-            this.context = context;
-            this.page = page;
-        }
-        
-        @Override
-        public void close() {
-            browser.close();
-            playwright.close();
-        }
-    }
 }
