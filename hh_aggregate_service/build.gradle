@@ -1,0 +1,59 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'by.icemens'
+version = '1.0-SNAPSHOT'
+
+// Кодировка для всех задач
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.withType(JavaExec).configureEach {
+    jvmArgs '-Dfile.encoding=UTF-8'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Playwright для Java
+    implementation 'com.microsoft.playwright:playwright:1.41.0'
+    
+    // Lombok для уменьшения шаблонного кода
+    compileOnly 'org.projectlombok:lombok:1.18.30'
+    annotationProcessor 'org.projectlombok:lombok:1.18.30'
+    
+    // Jackson для работы с JSON
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.21.0'
+    
+    // Логирование
+    implementation 'org.slf4j:slf4j-api:2.0.11'
+    implementation 'ch.qos.logback:logback-classic:1.5.32'
+    
+    // Тестирование
+    testImplementation platform('org.junit:junit-bom:5.10.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+application {
+    mainClass = 'by.icemens.hh_aggregate_service.VacancyParserDemo'
+}
+
+run {
+    jvmArgs '-Dfile.encoding=UTF-8'
+}
+
+jar {
+    manifest {
+        attributes 'Main-Class': 'by.icemens.hh_aggregate_service.VacancyParserDemo'
+    }
+}
