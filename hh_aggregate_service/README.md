@@ -1,194 +1,291 @@
-# HH.ru Parser (Java + Playwright)
+# HH Autoresponse System - Aggregate Service
 
-Простой парсер вакансий HH.ru на Java с использованием Playwright.
+Spring Boot микросервис для парсинга вакансий HH.ru и публикации их в Kafka.
+
+## Архитектура
+
+```
+┌─────────────┐     ┌─────────────────────┐     ┌─────────────┐
+│   Client    │────▶│  HH Aggregate       │────▶│   Kafka     │
+│  (REST API) │     │  Service (8080)     │     │ (vacancies) │
+└─────────────┘     └─────────────────────┘     └─────────────┘
+                          │
+                          ▼
+                   ┌─────────────┐
+                   │  PostgreSQL │
+                   │   (5444)    │
+                   └─────────────┘
+```
+
+## Технологии
+
+- **Java 17+**
+- **Spring Boot 3.2.5**
+- **Spring Security + JWT**
+- **Spring Data JPA**
+- **Spring Kafka**
+- **Playwright** (парсинг HH.ru)
+- **PostgreSQL 16**
+- **Apache Kafka 3.7.0**
 
 ## Структура проекта
 
 ```
 hh_aggregate_service/
 ├── src/main/java/by/icemens/hh_aggregate_service/
-│   ├── config/
-│   │   └── Settings.java        # Настройки
-│   ├── model/
-│   │   └── Vacancy.java         # Модель вакансии
-│   ├── service/
-│   │   ├── BrowserManager.java  # Менеджер браузера
-│   │   └── VacancySearchService.java  # Сервис поиска
-│   ├── Login.java               # Авторизация
-│   └── VacancyParserDemo.java   # Демонстрация парсинга
+│   ├── config/                    # Конфигурация безопасности, CORS
+│   ├── controller/                # REST контроллеры
+│   │   ├── AuthController.java    # /api/auth (login, register)
+│   │   ├── ParserController.java  # /api/vacancies, /api/hh-token
+│   │   └── SchedulerController.java # Управление планировщиком
+│   ├── dto/                       # Data Transfer Objects
+│   ├── entity/                    # JPA сущности
+│   │   ├── User.java
+│   │   ├── HhToken.java
+│   │   └── Vacancy.java
+│   ├── message/                   # Kafka сообщения
+│   │   └── VacancyMessage.java
+│   ├── publish/                   # Kafka продюсеры
+│   │   └── VacancyPublisher.java
+│   ├── repository/                # Spring Data репозитории
+│   ├── security/                  # JWT фильтры, конфиги
+│   └── service/                   # Бизнес-логика
+│       ├── AuthService.java
+│       ├── ParserService.java
+│       ├── PlaywrightService.java
+│       ├── TokenService.java
+│       └── SchedulerService.java
+├── src/main/resources/
+│   └── application.yml            # Конфигурация приложения
+├── docker-compose.yml             # PostgreSQL + Kafka
 ├── build.gradle
 └── README.md
 ```
 
-## Установка
+## Быстрый старт
 
 ### 1. Требования
 
 - Java 17 или выше
+- Docker и Docker Compose
 - Gradle 8.x
 
-### 2. Сборка проекта
+### 2. Запуск инфраструктуры
 
 ```bash
 cd hh_aggregate_service
-gradle build
+docker-compose up -d
 ```
 
-### 3. Установка браузеров Playwright
+Запустятся:
+- **PostgreSQL** на порту `5444`
+- **Kafka** на порту `9092`
+
+### 3. Запуск приложения
 
 ```bash
-# Windows (PowerShell)
-pwsh bin\install-playwright.ps1
-
-# Или через Java
-gradle run --args="install-browsers"
+gradle bootRun
 ```
 
-## Использование
-
-### Шаг 1: Авторизация
-
-Перед первым запуском нужно авторизоваться на HH.ru:
-
-```bash
-gradle run -DmainClass=by.icemens.hh_aggregate_service.Login
-```
-
-Или через Java:
+Или собрать JAR и запустить:
 
 ```bash
 gradle build
-java -cp build/classes/java/main;build/resources/main by.icemens.hh_aggregate_service.Login
+java -jar build/libs/hh-aggregate-service-1.0-SNAPSHOT.jar
 ```
 
-**Что происходит:**
-1. Откроется браузер Chromium
-2. Войдите в свой аккаунт HH.ru
-3. После успешного входа нажмите Enter в терминале
-4. Сессия сохранится в `~/.hh_autoresponse/hh_session.json`
+## API Endpoints
 
-### Шаг 2: Парсинг вакансий
+### Аутентификация
 
-Запуск с параметрами по умолчанию:
+#### Регистрация
+```http
+POST /api/auth/register
+Content-Type: application/json
 
-```bash
-gradle run
+{
+  "email": "user@example.com",
+  "password": "password123"
+}
 ```
 
-Свои параметры (запрос и страница):
+#### Вход
+```http
+POST /api/auth/login
+Content-Type: application/json
 
-```bash
-gradle run --args="Python Developer 0"
+{
+  "email": "user@example.com",
+  "password": "password123"
+}
 ```
 
-Или через Java:
-
-```bash
-java -cp build/classes/java/main;build/resources/main by.icemens.hh_aggregate_service.VacancyParserDemo "Java Developer" 0
+**Ответ:**
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiJ9...",
+  "expiresAt": "2026-03-12T15:20:00Z"
+}
 ```
 
-## Пример вывода
+### Парсинг вакансий
 
-```
-============================================================
-           Парсинг вакансий HH.ru
-============================================================
-
-Запрос: Java Developer
-Страница: 0
-
-[OK] Найдено вакансий: 20
-
-1. Java Developer
-   Компания: Яндекс
-   URL: https://hh.ru/vacancy/12345678
-
-2. Senior Java Developer
-   Компания: Сбер
-   URL: https://hh.ru/vacancy/87654321
-
-...
+#### Получить вакансии
+```http
+GET /api/vacancies?query=Java Developer&page=0
+Authorization: Bearer {token}
 ```
 
-## Настройки
+**Ответ:**
+```json
+[
+  {
+    "id": 1,
+    "title": "Java Developer",
+    "employer": "Яндекс",
+    "url": "https://hh.ru/vacancy/12345678",
+    "description": "...",
+    "salaryFrom": 150000,
+    "salaryTo": 250000,
+    "currency": "RUR",
+    "region": "Москва"
+  }
+]
+```
 
-Файл: `src/main/java/by/icemens/hh_aggregate_service/config/Settings.java`
+#### Сохранить токен HH.ru
+```http
+POST /api/hh-token
+Authorization: Bearer {token}
+Content-Type: application/json
 
-| Параметр | По умолчанию | Описание |
-|----------|--------------|----------|
-| `defaultSearchText` | Java Developer | Запрос поиска по умолчанию |
-| `areaCode` | 113 | Код региона (113 = Россия) |
-| `browserHeadless` | true | Режим без отображения браузера |
-| `pageTimeout` | 30000 | Таймаут загрузки страницы (мс) |
+{
+  "tokenValue": "hh_token_value"
+}
+```
 
-## Сессия
+### Планировщик
 
-Сессия сохраняется в:
-- **Windows:** `C:\Users\<user>\.hh_autoresponse\hh_session.json`
-- **Linux/macOS:** `~/.hh_autoresponse/hh_session.json`
+#### Включить/выключить парсинг по расписанию
+```http
+POST /api/scheduler/enable
+Authorization: Bearer {token}
+```
 
-Для обновления сессии повторно запустите `Login.main()`.
+```http
+POST /api/scheduler/disable
+Authorization: Bearer {token}
+```
 
-## Возможности
+## Конфигурация
 
-- ✅ Поиск вакансий с указанием запроса и страницы
-- ✅ Парсинг заголовка, компании, URL вакансии
-- ✅ Проверка на капчу
-- ✅ Сохранение сессии браузера
-- ✅ Headless режим (по умолчанию)
+## Kafka
 
-## Ограничения
+Приложение публикует вакансии в топик **`vacancies.parsed`**.
 
-- ❌ Нет отклика на вакансии (можно добавить)
-- ❌ Нет обработки пагинации (только одна страница за запрос)
-- ❌ Нет сохранения результатов в файл
-- ❌ Нет работы с зарплатой и регионом (можно добавить)
+Топик создаётся автоматически при первой отправке сообщения (настройка `KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"`).
+
+### Формат сообщения
+
+```json
+{
+  "userId": 1,
+  "vacancyId": 12345,
+  "title": "Java Developer",
+  "employer": "Яндекс",
+  "url": "https://hh.ru/vacancy/12345678",
+  "salaryFrom": 150000,
+  "salaryTo": 250000,
+  "currency": "RUR",
+  "region": "Москва"
+}
+```
+
+## Безопасность
+
+- Пароли хешируются (BCrypt)
+- JWT токены для аутентификации
+- CORS настроен для localhost
+
+## База данных
+
+Таблицы создаются автоматически (`ddl-auto: update`):
+
+- `users` — пользователи
+- `hh_tokens` — токены HH.ru
+- `vacancies` — распарсенные вакансии
+
+## Логирование
+
+Уровень логирования в `application.yml`:
+
+```yaml
+logging:
+  level:
+    root: INFO
+    by.icemens.hh_aggregate_service: DEBUG
+    com.microsoft.playwright: WARN
+```
 
 ## Troubleshooting
 
-### Session file not found
+### Kafka: UNKNOWN_TOPIC_OR_PARTITION
 
-```
-[ERROR] Сессия не найдена!
-Запустите Login.main() для авторизации.
-```
+Топик `vacancies.parsed` не существует. Проверьте, что в `docker-compose.yml`:
 
-**Решение:** Запустите `Login.main()` для авторизации.
-
-### Captcha detected
-
-```
-[ERROR] Сработала защита от ботов (captcha)
+```yaml
+KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
 ```
 
-**Решение:**
-1. Отключите headless режим в `Settings.java`: `browserHeadless = false`
-2. Обновите сессию через `Login.main()`
-
-### Playwright browser not found
-
-```
-Exception: Executable doesn't exist at ...
-```
-
-**Решение:** Установите браузеры Playwright:
+И перезапустите Kafka:
 
 ```bash
-# Windows
-pwsh bin\install-playwright.ps1
-
-# Linux/macOS
-playwright install chromium
+docker-compose restart kafka
 ```
 
-## Расширение функциональности
+### Playwright: браузер не найден
 
-Для добавления новых возможностей:
+```
+Exception: Executable doesn't exist
+```
 
-1. **Парсинг зарплаты:** Добавьте поля `salaryFrom`, `salaryTo`, `currency` в `Vacancy.java` и парсинг в `VacancySearchService.java`
-2. **Отклик на вакансию:** Создайте `VacancyApplyService.java` по аналогии с Python версией
-3. **Сохранение в JSON:** Добавьте запись результатов в файл в `VacancyParserDemo.java`
-4. **Пагинация:** Добавьте цикл по страницам в `VacancyParserDemo.java`
+Установите браузеры Playwright:
+
+```bash
+# Windows (PowerShell)
+pwsh bin/install-playwright.ps1
+
+# Linux/macOS
+npx playwright install chromium
+```
+
+### Session expired на HH.ru
+
+Обновите токен HH.ru через API:
+
+```http
+POST /api/hh-token
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "tokenValue": "новый_токен"
+}
+```
+
+## Тестирование
+
+```bash
+gradle test
+```
+
+## Сборка
+
+```bash
+gradle clean build
+```
+
+JAR файл: `build/libs/hh-aggregate-service-1.0-SNAPSHOT.jar`
 
 ## Лицензия
 
