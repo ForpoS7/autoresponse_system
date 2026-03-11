@@ -1,6 +1,8 @@
 plugins {
     id 'java'
     id 'application'
+    id 'org.springframework.boot' version '3.2.5'
+    id 'io.spring.dependency-management' version '1.1.5'
 }
 
 group = 'by.icemens'
@@ -20,24 +22,35 @@ repositories {
 }
 
 dependencies {
-    // Playwright для Java
-    implementation 'com.microsoft.playwright:playwright:1.41.0'
-    
-    // Lombok для уменьшения шаблонного кода
-    compileOnly 'org.projectlombok:lombok:1.18.30'
-    annotationProcessor 'org.projectlombok:lombok:1.18.30'
-    
+    // Spring Boot
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.kafka:spring-kafka'
+    testImplementation 'org.springframework.kafka:spring-kafka-test'
+
+    // PostgreSQL
+    runtimeOnly 'org.postgresql:postgresql'
+
+    // JWT
+    implementation 'io.jsonwebtoken:jjwt-api:0.12.5'
+    runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.5'
+    runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.5'
+
+    // Lombok
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+
     // Jackson для работы с JSON
-    implementation 'com.fasterxml.jackson.core:jackson-databind:2.21.1'
-    
-    // Логирование
-    implementation 'org.slf4j:slf4j-api:2.0.11'
-    implementation 'ch.qos.logback:logback-classic:1.5.32'
-    
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
+
+    // Playwright для парсинга HH.ru
+    implementation 'com.microsoft.playwright:playwright:1.40.0'
+
     // Тестирование
-    testImplementation platform('org.junit:junit-bom:5.10.0')
-    testImplementation 'org.junit.jupiter:junit-jupiter'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.security:spring-security-test'
 }
 
 test {
@@ -45,7 +58,7 @@ test {
 }
 
 application {
-    mainClass = 'by.icemens.hh_aggregate_service.VacancyParserDemo'
+    mainClass = 'by.icemens.hh_aggregate_service.HhAggregateServiceApplication'
 }
 
 run {
@@ -53,7 +66,5 @@ run {
 }
 
 jar {
-    manifest {
-        attributes 'Main-Class': 'by.icemens.hh_aggregate_service.VacancyParserDemo'
-    }
+    enabled = false
 }

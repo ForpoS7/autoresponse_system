@@ -1,0 +1,57 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: hh-aggregate-service
+  
+  datasource:
+    url: jdbc:postgresql://localhost:5444/hh
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      properties:
+        spring:
+          json:
+            add:
+              type:
+                headers=false
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      retries: 3
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+
+# JWT настройки
+jwt:
+  secret: defaultSecretKeyForDevelopment11111111111111111111111111111111111111111111111111111111111 # если деплоить прилу, то тут этого быть не должно
+  expiration: 86400000 # 24 часа в миллисекундах
+
+# Настройки планировщика
+scheduler:
+  parser:
+    # Cron выражение для запуска парсинга по расписанию
+    # Примеры:
+    # - "0 0 * * * *" - каждый час
+    # - "0 0 9 * * *" - каждый день в 9:00
+    # - "0 0 9-18 * * *" - каждый час с 9:00 до 18:00
+    # Пустое значение отключает планировщик
+    cron: ""
+
+logging:
+  level:
+    root: INFO
+    by.icemens.hh_aggregate_service: DEBUG
+    com.microsoft.playwright: WARN
