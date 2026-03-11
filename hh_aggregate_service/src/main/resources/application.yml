@@ -1,6 +1,10 @@
 server:
   port: 8080
 
+hh:
+  browser:
+    headless: false
+
 spring:
   application:
     name: hh-aggregate-service

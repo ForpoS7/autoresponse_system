@@ -17,45 +17,60 @@ public class TokenService {
     private final HhTokenRepository hhTokenRepository;
 
     /**
-     * Сохранение сессии Playwright (JSON) для пользователя
+     * Сохранение полного состояния сессии (storage state) в JSON формате
      * @param userId ID пользователя
-     * @param sessionJson JSON сессии от Playwright (storage state)
+     * @param storageState JSON состояние сессии (cookies, localStorage, etc.)
      */
     @Transactional
-    public void saveHhSession(Long userId, String sessionJson) {
-        log.info("Сохранение сессии HH.ru для пользователя: {}", userId);
+    public void saveSessionState(Long userId, String storageState) {
+        log.info("Сохранение состояния сессии для пользователя: {}", userId);
+
+        if (storageState == null || storageState.isBlank()) {
+            log.warn("Попытка сохранить пустое состояние сессии для пользователя: {}", userId);
+            return;
+        }
 
         Optional<HhToken> existing = hhTokenRepository.findByUserId(userId);
 
         if (existing.isPresent()) {
             HhToken hhToken = existing.get();
-            hhToken.setTokenValue(sessionJson);
+            hhToken.setTokenValue(storageState);
             hhTokenRepository.save(hhToken);
-            log.info("Сессия обновлена");
+            log.info("Состояние сессии обновлено для пользователя: {}", userId);
         } else {
             HhToken hhToken = HhToken.builder()
                     .userId(userId)
-                    .tokenValue(sessionJson)
+                    .tokenValue(storageState)
                     .build();
             hhTokenRepository.save(hhToken);
-            log.info("Сессия сохранена");
+            log.info("Состояние сессии сохранено для пользователя: {}", userId);
         }
     }
 
     /**
-     * Получение сессии Playwright (JSON) для пользователя
+     * Получение токена для пользователя
      * @param userId ID пользователя
-     * @return JSON сессии или empty если не найдена
+     * @return токен или empty если не найдена
      */
-    public Optional<String> getHhSession(Long userId) {
+    public Optional<String> getToken(Long userId) {
         return hhTokenRepository.findByUserId(userId)
                 .map(HhToken::getTokenValue);
     }
 
     /**
-     * Проверка наличия сессии у пользователя
+     * Получение состояния сессии (storage state) для пользователя
+     * @param userId ID пользователя
+     * @return JSON состояние сессии или empty если не найдена
      */
-    public boolean hasHhSession(Long userId) {
+    public Optional<String> getSessionState(Long userId) {
+        return hhTokenRepository.findByUserId(userId)
+                .map(HhToken::getTokenValue);
+    }
+
+    /**
+     * Проверка наличия токена у пользователя
+     */
+    public boolean hasToken(Long userId) {
         return hhTokenRepository.findByUserId(userId)
                 .map(token -> token.getTokenValue() != null && !token.getTokenValue().isEmpty())
                 .orElse(false);

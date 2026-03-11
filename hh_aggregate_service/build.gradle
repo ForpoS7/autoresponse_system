@@ -8,15 +8,6 @@ plugins {
 group = 'by.icemens'
 version = '1.0-SNAPSHOT'
 
-// Кодировка для всех задач
-tasks.withType(JavaCompile).configureEach {
-    options.encoding = 'UTF-8'
-}
-
-tasks.withType(JavaExec).configureEach {
-    jvmArgs '-Dfile.encoding=UTF-8'
-}
-
 repositories {
     mavenCentral()
 }
@@ -59,10 +50,6 @@ test {
 
 application {
     mainClass = 'by.icemens.hh_aggregate_service.HhAggregateServiceApplication'
-}
-
-run {
-    jvmArgs '-Dfile.encoding=UTF-8'
 }
 
 jar {

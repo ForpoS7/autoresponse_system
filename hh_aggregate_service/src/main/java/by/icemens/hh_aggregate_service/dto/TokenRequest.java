@@ -9,7 +9,7 @@ import lombok.NoArgsConstructor;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class HhTokenRequest {
+public class TokenRequest {
 
     private String tokenValue;
 }

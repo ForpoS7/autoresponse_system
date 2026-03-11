@@ -21,6 +21,7 @@ import static by.icemens.hh_aggregate_service.config.PlaywrightConfig.DEFAULT_HE
 public class PlaywrightService {
 
     private final PlaywrightConfig playwrightConfig;
+    private final TokenService tokenService;
     private Playwright playwright;
     private Browser browser;
 
@@ -58,28 +59,39 @@ public class PlaywrightService {
     }
 
     /**
-     * Получение страницы браузера с загрузкой сессии из бд
+     * Получение страницы браузера с загрузкой сессии из БД
      */
     public BrowserPage getPage(Long userId) {
-//        String hhToken = hhTokenService.getHhToken(userId).orElseThrow(
-//                () -> new IllegalStateException(
-//                "Файл сессии не найден. Авторизуйтесь в hh.ru."));
-        return getPageFromStorage();
+        return getPageFromStorage(userId);
     }
 
     /**
-     * Получение страницы браузера с загрузкой сессии
+     * Получение страницы браузера с загрузкой сессии из БД
      */
-    public BrowserPage getPageFromStorage() {
+    public BrowserPage getPageFromStorage(Long userId) {
         if (browser == null) {
             init();
         }
 
-        BrowserContext context = browser.newContext(
-                new Browser.NewContextOptions()
-//                        .setStorageState(storageState)
-                        .setUserAgent(DEFAULT_HEADERS.get("User-Agent"))
-        );
+        // Получаем состояние сессии из БД
+        String storageState = tokenService.getSessionState(userId)
+                .orElse(null);
+
+        BrowserContext context;
+        if (storageState != null && !storageState.isBlank()) {
+            log.info("Загрузка сессии из БД для пользователя: {}", userId);
+            context = browser.newContext(
+                    new Browser.NewContextOptions()
+                            .setStorageState(storageState)
+                            .setUserAgent(DEFAULT_HEADERS.get("User-Agent"))
+            );
+        } else {
+            log.info("Сессия не найдена. Создание новой сессии для пользователя: {}", userId);
+            context = browser.newContext(
+                    new Browser.NewContextOptions()
+                            .setUserAgent(DEFAULT_HEADERS.get("User-Agent"))
+            );
+        }
 
         Page page = context.newPage();
         page.setDefaultTimeout(30000);
@@ -105,6 +117,10 @@ public class PlaywrightService {
 
         public Page get() {
             return page;
+        }
+
+        public BrowserContext getContext() {
+            return context;
         }
 
         @Override
