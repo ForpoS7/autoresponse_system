@@ -11,6 +11,8 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class Vacancy {
 
+    private Long id;
+
     private String title;
 
     private String url;

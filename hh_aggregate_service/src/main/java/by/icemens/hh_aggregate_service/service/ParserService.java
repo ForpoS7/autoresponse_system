@@ -69,7 +69,10 @@ public class ParserService {
                             ? employerEl.textContent().trim()
                             : "Не указан";
 
+                    Long vacancyId = Long.valueOf(href.replaceFirst(".*/vacancy/", "").split("\\?")[0]);
+
                     Vacancy vacancy = Vacancy.builder()
+                            .id(vacancyId)
                             .title(title)
                             .url(href)
                             .employer(employer)
