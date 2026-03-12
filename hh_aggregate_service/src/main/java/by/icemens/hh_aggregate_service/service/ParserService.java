@@ -1,18 +1,13 @@
 package by.icemens.hh_aggregate_service.service;
 
 import by.icemens.hh_aggregate_service.config.PlaywrightConfig;
-import by.icemens.hh_aggregate_service.dto.VacancyResponse;
-import by.icemens.hh_aggregate_service.entity.Vacancy;
-import by.icemens.hh_aggregate_service.message.VacancyMessage;
+import by.icemens.hh_aggregate_service.dto.Vacancy;
 import by.icemens.hh_aggregate_service.publish.VacancyPublisher;
-import by.icemens.hh_aggregate_service.repository.UserRepository;
-import com.microsoft.playwright.BrowserContext;
 import com.microsoft.playwright.ElementHandle;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.options.WaitUntilState;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -26,8 +21,6 @@ public class ParserService {
     private final PlaywrightConfig playwrightConfig;
     private final PlaywrightService playwrightService;
     private final VacancyPublisher vacancyPublisher;
-    private final UserRepository userRepository;
-    private final TokenService tokenService;
 
     public List<Vacancy> parseVacancies(String query, int page, Long userId) {
         log.info("Парсинг вакансий: запрос='{}', страница={}, userId={}", query, page, userId);
@@ -94,16 +87,7 @@ public class ParserService {
 
             log.info("Найдено вакансий: {}", vacancies.size());
 
-            Vacancy vacanciesFirst = vacancies.getFirst();
-            vacancyPublisher.publish(VacancyMessage.builder()
-                    .vacancyId(vacanciesFirst.getId())
-                    .title(vacanciesFirst.getTitle())
-                    .employer(vacanciesFirst.getEmployer())
-                    .url(vacanciesFirst.getUrl())
-                    .parsedAt(vacanciesFirst.getCreatedAt())
-                    .userId(vacanciesFirst.getUserId())
-                    .build()
-            );
+            vacancyPublisher.publish(vacancies);
 
             return vacancies;
 
@@ -113,65 +97,4 @@ public class ParserService {
         }
     }
 
-    public VacancyResponse toResponse(Vacancy vacancy) {
-        return VacancyResponse.builder()
-                .id(vacancy.getId())
-                .title(vacancy.getTitle())
-                .url(vacancy.getUrl())
-                .employer(vacancy.getEmployer())
-                .description(vacancy.getDescription())
-                .salaryFrom(vacancy.getSalaryFrom())
-                .salaryTo(vacancy.getSalaryTo())
-                .currency(vacancy.getCurrency())
-                .region(vacancy.getRegion())
-                .build();
-    }
-
-    public Long getCurrentUserId(UserDetails userDetails) {
-        return userRepository.findByEmail(userDetails.getUsername()).orElseThrow(
-                () -> new IllegalStateException(
-                        "Пользователь с таким email - " + userDetails.getUsername() + " не найден."
-                )
-        ).getId();
-    }
-
-    /**
-     * Извлечение и сохранение hhtoken из cookies браузера
-     * Открывает страницу входа hh.ru и ждёт авторизации пользователя
-     * @param userId ID пользователя
-     */
-    public void extractAndSaveToken(Long userId) {
-        log.info("Извлечение hhtoken для пользователя: {}", userId);
-
-        try (var browserPage = playwrightService.getPage(userId)) {
-            Page pg = browserPage.get();
-            BrowserContext context = browserPage.getContext();
-
-            // Переход на страницу входа
-            log.info("Переход на страницу входа hh.ru...");
-            pg.navigate("https://hh.ru/login", new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
-
-            // Ожидание пока пользователь не авторизуется (максимум 5 минут)
-            log.info("Ожидание авторизации пользователя (максимум 5 минут)...");
-            log.info("Откройте браузер и войдите в аккаунт hh.ru");
-
-            // Ждём появления элемента профиля (признак авторизации)
-            try {
-                pg.waitForSelector("[data-qa='header-profile']", new Page.WaitForSelectorOptions().setTimeout(300000));
-                log.info("Пользователь авторизован!");
-            } catch (Exception e) {
-                log.warn("Таймаут ожидания авторизации. Проверяем наличие hhtoken...");
-            }
-
-            // Сохранение полного состояния сессии (storage state)
-            log.info("Сохранение состояния сессии...");
-            String storageState = context.storageState();
-            tokenService.saveSessionState(userId, storageState);
-            log.info("[OK] Состояние сессии сохранено в БД для пользователя: {}", userId);
-
-        } catch (Exception e) {
-            log.error("Ошибка при извлечении токена: {}", e.getMessage(), e);
-            throw new RuntimeException("Ошибка при извлечении токена: " + e.getMessage(), e);
-        }
-    }
 }

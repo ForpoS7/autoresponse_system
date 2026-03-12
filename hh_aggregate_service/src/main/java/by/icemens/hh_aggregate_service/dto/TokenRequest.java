@@ -11,5 +11,6 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class TokenRequest {
 
+    private Long userId;
     private String tokenValue;
 }

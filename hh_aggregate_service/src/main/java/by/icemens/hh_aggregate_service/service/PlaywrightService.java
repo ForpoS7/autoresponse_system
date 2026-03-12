@@ -1,6 +1,8 @@
 package by.icemens.hh_aggregate_service.service;
 
 import by.icemens.hh_aggregate_service.config.PlaywrightConfig;
+import by.icemens.hh_aggregate_service.entity.HhToken;
+import by.icemens.hh_aggregate_service.repository.HhTokenRepository;
 import com.microsoft.playwright.Browser;
 import com.microsoft.playwright.BrowserContext;
 import com.microsoft.playwright.Page;
@@ -21,7 +23,7 @@ import static by.icemens.hh_aggregate_service.config.PlaywrightConfig.DEFAULT_HE
 public class PlaywrightService {
 
     private final PlaywrightConfig playwrightConfig;
-    private final TokenService tokenService;
+    private final HhTokenRepository tokenRepository;
     private Playwright playwright;
     private Browser browser;
 
@@ -74,7 +76,8 @@ public class PlaywrightService {
         }
 
         // Получаем состояние сессии из БД
-        String storageState = tokenService.getSessionState(userId)
+        String storageState = tokenRepository.findByUserId(userId)
+                .map(HhToken::getTokenValue)
                 .orElse(null);
 
         BrowserContext context;

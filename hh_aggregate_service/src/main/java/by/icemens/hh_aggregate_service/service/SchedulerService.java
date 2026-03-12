@@ -1,6 +1,6 @@
 //package by.icemens.hh_aggregate_service.service;
 //
-//import by.icemens.hh_aggregate_service.entity.Vacancy;
+//import by.icemens.hh_aggregate_service.dto.Vacancy;
 //import lombok.RequiredArgsConstructor;
 //import lombok.extern.slf4j.Slf4j;
 //import org.springframework.scheduling.annotation.Scheduled;

@@ -1,6 +1,5 @@
 package by.icemens.hh_aggregate_service.service;
 
-import by.icemens.hh_aggregate_service.entity.User;
 import by.icemens.hh_aggregate_service.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,5 +19,13 @@ public class CustomUserDetailsService implements UserDetailsService {
     public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
         return userRepository.findByEmail(email)
                 .orElseThrow(() -> new UsernameNotFoundException("Пользователь не найден: " + email));
+    }
+
+    public Long getCurrentUserId(UserDetails userDetails) {
+        return userRepository.findByEmail(userDetails.getUsername()).orElseThrow(
+                () -> new IllegalStateException(
+                        "Пользователь с таким email - " + userDetails.getUsername() + " не найден."
+                )
+        ).getId();
     }
 }
