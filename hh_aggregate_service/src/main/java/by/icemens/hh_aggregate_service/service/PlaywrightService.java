@@ -13,8 +13,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
-
 import static by.icemens.hh_aggregate_service.config.PlaywrightConfig.DEFAULT_HEADERS;
 
 @RequiredArgsConstructor
@@ -32,17 +30,13 @@ public class PlaywrightService {
         if (playwright == null) {
             log.info("Инициализация Playwright...");
             playwright = Playwright.create();
-            browser = playwright.chromium().launch(
-                    new com.microsoft.playwright.BrowserType.LaunchOptions()
-                            .setHeadless(playwrightConfig.isHeadless())
-                            .setSlowMo(100)
-                            .setArgs(List.of(
-                                    "--disable-blink-features=AutomationControlled",
-                                    "--disable-dev-shm-usage",
-                                    "--no-sandbox",
-                                    "--disable-gpu"
-                            ))
-            );
+            browser = playwright
+                    .firefox()
+                    .launch(
+                            new com.microsoft.playwright.BrowserType.LaunchOptions()
+                                    .setHeadless(playwrightConfig.isHeadless())
+                                    .setSlowMo(100)
+                    );
             log.info("Браузер запущен");
         }
     }
