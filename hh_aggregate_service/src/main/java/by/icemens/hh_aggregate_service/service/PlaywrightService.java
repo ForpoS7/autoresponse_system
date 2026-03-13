@@ -1,5 +1,7 @@
 package by.icemens.hh_aggregate_service.service;
 
+import static by.icemens.hh_aggregate_service.config.PlaywrightConfig.DEFAULT_HEADERS;
+
 import by.icemens.hh_aggregate_service.config.PlaywrightConfig;
 import by.icemens.hh_aggregate_service.entity.HhToken;
 import by.icemens.hh_aggregate_service.repository.HhTokenRepository;
@@ -9,13 +11,10 @@ import com.microsoft.playwright.Page;
 import com.microsoft.playwright.Playwright;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-
-import java.util.List;
-
-import static by.icemens.hh_aggregate_service.config.PlaywrightConfig.DEFAULT_HEADERS;
 
 @RequiredArgsConstructor
 @Component
@@ -76,23 +75,28 @@ public class PlaywrightService {
         }
 
         // Получаем состояние сессии из БД
-        String storageState = tokenRepository.findByUserId(userId)
-                .map(HhToken::getTokenValue)
-                .orElse(null);
+        String storageState = tokenRepository
+            .findByUserId(userId)
+            .map(HhToken::getTokenValue)
+            .orElse(null);
 
         BrowserContext context;
         if (storageState != null && !storageState.isBlank()) {
             log.info("Загрузка сессии из БД для пользователя: {}", userId);
             context = browser.newContext(
-                    new Browser.NewContextOptions()
-                            .setStorageState(storageState)
-                            .setUserAgent(DEFAULT_HEADERS.get("User-Agent"))
+                new Browser.NewContextOptions()
+                    .setStorageState(storageState)
+                    .setUserAgent(DEFAULT_HEADERS.get("User-Agent"))
             );
         } else {
-            log.info("Сессия не найдена. Создание новой сессии для пользователя: {}", userId);
+            log.info(
+                "Сессия не найдена. Создание новой сессии для пользователя: {}",
+                userId
+            );
             context = browser.newContext(
-                    new Browser.NewContextOptions()
-                            .setUserAgent(DEFAULT_HEADERS.get("User-Agent"))
+                new Browser.NewContextOptions().setUserAgent(
+                    DEFAULT_HEADERS.get("User-Agent")
+                )
             );
         }
 
@@ -100,16 +104,19 @@ public class PlaywrightService {
         page.setDefaultTimeout(30000);
 
         // Скрипт для скрытия факта автоматизации
-        page.addInitScript("() => { " +
+        page.addInitScript(
+            "() => { " +
                 "Object.defineProperty(navigator, 'webdriver', { get: () => undefined }); " +
                 "Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] }); " +
                 "Object.defineProperty(navigator, 'languages', { get: () => ['ru-RU', 'ru', 'en-US', 'en'] }); " +
-                "}");
+                "}"
+        );
 
         return new BrowserPage(page, context);
     }
 
     public static class BrowserPage implements AutoCloseable {
+
         private final Page page;
         private final BrowserContext context;
 

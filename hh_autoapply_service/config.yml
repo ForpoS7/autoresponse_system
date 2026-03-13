@@ -1,0 +1,39 @@
+server:
+  port: 8081
+
+database:
+  host: localhost
+  port: 5444
+  name: hh
+  user: postgres
+  password: postgres
+  sslmode: disable
+
+kafka:
+  brokers:
+    - localhost:9092
+  topic:
+    vacancies: vacancies.parsed
+
+jwt:
+  secret: defaultSecretKeyForDevelopment11111111111111111111111111111111111111111111111111111111111
+  expiration: 86400000 # 24 часа в миллисекундах
+  java_service_token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0QGV4YW1wbGUuY29tIiwiaWF0IjoxNzczNDA0NjIwLCJleHAiOjE3NzM0OTEwMjB9.9GSAYk-F7hnMlTtan5mx44j8rKI8QQuaKV7ZLxNaMe8
+
+playwright:
+  headless: false
+  area_code: 1 # Москва (можно изменить на другой регион)
+  slow_mo: 100
+
+rate_limiter:
+  enabled: true
+  requests_per_minute: 10
+  burst: 5
+
+hh:
+  api_url: https://hh.ru
+
+# Scheduler настройки
+scheduler:
+  parser:
+    cron: "" # Пустое значение отключает планировщик
