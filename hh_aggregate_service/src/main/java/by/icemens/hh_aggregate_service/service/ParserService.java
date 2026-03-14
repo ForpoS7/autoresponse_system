@@ -8,6 +8,7 @@ import com.microsoft.playwright.Page;
 import com.microsoft.playwright.options.WaitUntilState;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.jsoup.Jsoup;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -88,6 +89,8 @@ public class ParserService {
                 }
             }
 
+            fetchDescriptions(vacancies, userId);
+
             log.info("Найдено вакансий: {}", vacancies.size());
 
             vacancyPublisher.publish(vacancies);
@@ -100,4 +103,36 @@ public class ParserService {
         }
     }
 
+    // TODO подумать над параллельной реализацией
+    private void fetchDescriptions(List<Vacancy> vacancies, Long userId) {
+        // Последовательная загрузка описаний (параллельные навигации ломаются)
+        try (var browserPage = playwrightService.getPage(userId)) {
+            Page pg = browserPage.get();
+
+            for (Vacancy vacancy : vacancies) {
+                try {
+                    pg.navigate(vacancy.getUrl(),
+                            new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+
+                    ElementHandle descEl = pg.waitForSelector(
+                            "[data-qa='vacancy-description']",
+                            new Page.WaitForSelectorOptions().setTimeout(5000)
+                    );
+
+                    String description = descEl != null
+                            ? Jsoup.parse(descEl.innerHTML()).text()
+                            : "";
+
+                    vacancy.setDescription(description);
+
+                    log.debug("Загружено описание для вакансии {}", vacancy.getId());
+
+                } catch (Exception e) {
+                    log.warn("Не удалось загрузить описание для вакансии {}: {}",
+                            vacancy.getId(), e.getMessage());
+                    vacancy.setDescription("");
+                }
+            }
+        }
+    }
 }
