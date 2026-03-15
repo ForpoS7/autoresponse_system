@@ -113,23 +113,42 @@ func (s *AutoApplyService) processAutoApply(ctx context.Context, req *model.Auto
 		log.Printf("Failed to save HH token locally: %v", err)
 	}
 
-	// Пробуем получить вакансии из Kafka (5 секунд таймаут)
-	vacancies, err := s.kafkaConsumer.ConsumeVacanciesBatch(ctx, 5*time.Second)
+	// Получаем вакансии из Kafka (ждем пока все спарсятся)
+	log.Printf("Getting vacancies from Kafka topic: vacancies.parsed")
+	vacancies, err := s.kafkaConsumer.ConsumeVacanciesBatchAndWait(ctx, 5*time.Minute, 10*time.Second)
 	if err != nil {
 		log.Printf("Failed to get vacancies from Kafka: %v", err)
+		req.Status = "failed"
+		s.autoApplyRepo.UpdateRequest(req)
+		return
 	}
 
-	// Если Kafka пуста, пробуем получить из Java сервиса
 	if len(vacancies) == 0 {
-		log.Printf("No vacancies in Kafka, trying Java service")
-		vacancies, err = s.getVacanciesFromJava(ctx, req)
-		if err != nil {
-			log.Printf("Failed to get vacancies from Java service: %v", err)
-			req.Status = "failed"
-			s.autoApplyRepo.UpdateRequest(req)
-			return
+		log.Printf("No vacancies received from Kafka")
+		req.Status = "completed"
+		s.autoApplyRepo.UpdateRequest(req)
+		return
+	}
+
+	log.Printf("Received %d vacancies from Kafka, filtering for user %d", len(vacancies), req.UserID)
+
+	// Фильтруем вакансии по user_id
+	var filteredVacancies []model.Vacancy
+	for _, v := range vacancies {
+		if v.UserID == req.UserID {
+			filteredVacancies = append(filteredVacancies, v)
 		}
 	}
+
+	if len(filteredVacancies) == 0 {
+		log.Printf("No vacancies found for user %d after filtering", req.UserID)
+		req.Status = "completed"
+		s.autoApplyRepo.UpdateRequest(req)
+		return
+	}
+
+	log.Printf("Filtered to %d vacancies for user %d", len(filteredVacancies), req.UserID)
+	vacancies = filteredVacancies
 
 	if len(vacancies) == 0 {
 		log.Printf("No vacancies found")
@@ -142,6 +161,7 @@ func (s *AutoApplyService) processAutoApply(ctx context.Context, req *model.Auto
 
 	for _, vacancy := range vacancies {
 		if req.AppliedCount >= req.ApplyCount {
+			log.Printf("Reached apply count limit (%d), stopping", req.ApplyCount)
 			break
 		}
 
@@ -152,6 +172,9 @@ func (s *AutoApplyService) processAutoApply(ctx context.Context, req *model.Auto
 		} else if success {
 			req.AppliedCount++
 			s.createLog(req.ID, vacancy.ID, vacancy.URL, "", "success", "")
+			// Обновляем счетчик в базе данных после каждого успешного отклика
+			s.autoApplyRepo.UpdateRequest(req)
+			log.Printf("Successfully applied to vacancy %d, total applied: %d/%d", vacancy.ID, req.AppliedCount, req.ApplyCount)
 		}
 
 		// Добавляем задержку между откликами (5-10 секунд + случайная вариация)
@@ -179,42 +202,31 @@ func (s *AutoApplyService) getHHTokenFromJava(ctx context.Context, userID int64)
 }
 
 func (s *AutoApplyService) getVacanciesFromJava(ctx context.Context, req *model.AutoApplyRequest) ([]model.Vacancy, error) {
-	log.Printf("Getting vacancies from Java service for user %d, query: %s", req.UserID, req.Query)
+	log.Printf("Getting vacancies from Kafka topic: vacancies.parsed")
 
-	page := 0
-	var allVacancies []model.Vacancy
-
-	for len(allVacancies) < req.ApplyCount {
-		vacancies, err := s.hhClient.GetVacancies(ctx, req.UserID, s.javaServiceToken, req.Query, page)
-		if err != nil {
-			log.Printf("Failed to get vacancies from Java service: %v", err)
-			break
-		}
-
-		if len(vacancies) == 0 {
-			break
-		}
-
-		for _, v := range vacancies {
-			allVacancies = append(allVacancies, model.Vacancy{
-				ID:          v.ID,
-				Title:       v.Title,
-				Employer:    v.Employer,
-				URL:         v.URL,
-				Description: v.Description,
-				SalaryFrom:  v.SalaryFrom,
-				SalaryTo:    v.SalaryTo,
-				Currency:    v.Currency,
-				Region:      v.Region,
-				UserID:      v.UserID,
-			})
-		}
-
-		page++
-		time.Sleep(500 * time.Millisecond)
+	// Ждем вакансии из Kafka: максимум 5 минут, idle timeout 10 секунд (если нет новых сообщений 10 сек - считаем что все)
+	vacancies, err := s.kafkaConsumer.ConsumeVacanciesBatchAndWait(ctx, 5*time.Minute, 10*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get vacancies from Kafka: %w", err)
 	}
 
-	return allVacancies, nil
+	if len(vacancies) == 0 {
+		log.Printf("No vacancies received from Kafka")
+		return []model.Vacancy{}, nil
+	}
+
+	log.Printf("Received %d vacancies from Kafka, filtering for user %d", len(vacancies), req.UserID)
+
+	// Фильтруем вакансии по user_id (если нужно)
+	var filteredVacancies []model.Vacancy
+	for _, v := range vacancies {
+		if v.UserID == req.UserID {
+			filteredVacancies = append(filteredVacancies, v)
+		}
+	}
+
+	log.Printf("Filtered to %d vacancies for user %d", len(filteredVacancies), req.UserID)
+	return filteredVacancies, nil
 }
 
 func (s *AutoApplyService) applyToVacancy(ctx context.Context, req *model.AutoApplyRequest, vacancy model.Vacancy, hhToken string) (bool, error) {
@@ -242,18 +254,9 @@ func (s *AutoApplyService) applyToVacancy(ctx context.Context, req *model.AutoAp
 	// Даем странице время на загрузку
 	time.Sleep(2 * time.Second)
 
-	// Ищем кнопку отклика. Пробуем несколько вариантов селекторов
-	var applyButton interface{}
-	var err error
-
-	// Сначала ищем в блоке действий вакансии (основная кнопка)
-	applyButton, err = pg.QuerySelector(".vacancy-action button, .vacancy-actions button, [data-qa='vacancy-action'] button")
-	if err != nil || applyButton == nil {
-		// Если не нашли, ищем кнопку по тексту "Откликнуться" в верхней части страницы
-		// Ищем в заголовке или в первом блоке с кнопками
-		applyButton, err = pg.QuerySelector("h1 ~ * button:text('Откликнуться'), header button:text('Откликнуться')")
-	}
-
+	// Ищем кнопку отклика. Это ссылка с data-qa="vacancy-response-link-top"
+	// Находится в блоке .vacancy-actions.vacancy-actions_applicant
+	applyButton, err := pg.QuerySelector("[data-qa='vacancy-response-link-top'], .vacancy-actions a:text('Откликнуться')")
 	if err != nil {
 		return false, fmt.Errorf("failed to find apply button: %w", err)
 	}

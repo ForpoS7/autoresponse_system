@@ -18,7 +18,7 @@ kafka:
 jwt:
   secret: defaultSecretKeyForDevelopment11111111111111111111111111111111111111111111111111111111111
   expiration: 86400000 # 24 часа в миллисекундах
-  java_service_token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0QGV4YW1wbGUuY29tIiwiaWF0IjoxNzczNDA0NjIwLCJleHAiOjE3NzM0OTEwMjB9.9GSAYk-F7hnMlTtan5mx44j8rKI8QQuaKV7ZLxNaMe8
+  java_service_token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0QGV4YW1wbGUuY29tIiwiaWF0IjoxNzczNTg5OTUyLCJleHAiOjE3NzM2NzYzNTJ9.4JmmHoC8hDiE3b4SvvuikxQHegUuMCeuaHgdLkJIimw
 
 playwright:
   headless: false
