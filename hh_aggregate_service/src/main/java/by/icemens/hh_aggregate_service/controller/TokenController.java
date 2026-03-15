@@ -20,6 +20,7 @@ public class TokenController {
     private final CustomUserDetailsService userDetailsService;
     private final TokenService tokenService;
 
+    // TODO убрать эту залупу отсюда и сделать по одному гет методу сразу и логин и отдачу токена в кафку
     /**
      * Извлечение hhtoken из cookies браузера
      * Открывает hh.ru и автоматически извлекает токен авторизации
