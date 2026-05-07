@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Go autoapply service (запущен на хосте)
+  - job_name: 'autoapply-service'
+    static_configs:
+      - targets: ['host.docker.internal:8081']
+    metrics_path: '/metrics'
+
+  # Prometheus сам себя мониторит
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

@@ -23,7 +23,13 @@ public class ParserService {
     private final PlaywrightService playwrightService;
     private final VacancyPublisher vacancyPublisher;
 
+    /** REST-вызов: jobId генерируется случайно внутри publisher. */
     public List<Vacancy> parseVacancies(String query, int page, Long userId) {
+        return parseVacancies(query, page, userId, null);
+    }
+
+    /** Kafka-вызов: jobId задан внешним источником (Go-сервис). */
+    public List<Vacancy> parseVacancies(String query, int page, Long userId, String jobId) {
         log.info("Парсинг вакансий: запрос='{}', страница={}, userId={}", query, page, userId);
 
         try (var browserPage = playwrightService.getPage(userId)) {
@@ -93,7 +99,11 @@ public class ParserService {
 
             log.info("Найдено вакансий: {}", vacancies.size());
 
-            vacancyPublisher.publish(vacancies);
+            if (jobId != null) {
+                vacancyPublisher.publish(vacancies, jobId);
+            } else {
+                vacancyPublisher.publish(vacancies);
+            }
 
             return vacancies;
 

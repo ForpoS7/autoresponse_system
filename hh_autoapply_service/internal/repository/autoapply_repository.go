@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"time"
 
+	"github.com/lib/pq"
 	"hh_autoapply_service/internal/model"
 )
 
@@ -66,4 +67,40 @@ func (r *AutoApplyRepository) CreateLog(log *model.AutoApplyLog) error {
 		log.RequestID, log.VacancyID, log.VacancyURL, log.CoverLetter,
 		log.Status, log.ErrorMessage, now,
 	).Scan(&log.ID)
+}
+
+// GetOldLogs возвращает логи старше olderThanDays дней (warm → cold).
+func (r *AutoApplyRepository) GetOldLogs(olderThanDays int) ([]model.AutoApplyLog, error) {
+	query := `
+		SELECT id, request_id, vacancy_id, vacancy_url, cover_letter, status, error_message, created_at
+		FROM auto_apply_logs
+		WHERE created_at < NOW() - ($1 || ' days')::interval
+		ORDER BY created_at
+	`
+	rows, err := r.db.Query(query, olderThanDays)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []model.AutoApplyLog
+	for rows.Next() {
+		var l model.AutoApplyLog
+		if err := rows.Scan(&l.ID, &l.RequestID, &l.VacancyID, &l.VacancyURL,
+			&l.CoverLetter, &l.Status, &l.ErrorMessage, &l.CreatedAt); err != nil {
+			return nil, err
+		}
+		logs = append(logs, l)
+	}
+	return logs, rows.Err()
+}
+
+// DeleteLogsByIDs удаляет логи после успешной архивации в cold storage.
+func (r *AutoApplyRepository) DeleteLogsByIDs(ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	query := `DELETE FROM auto_apply_logs WHERE id = ANY($1)`
+	_, err := r.db.Exec(query, pq.Array(ids))
+	return err
 }

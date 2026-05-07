@@ -16,6 +16,24 @@ type Config struct {
 	RateLimiter RateLimiterConfig `yaml:"rate_limiter"`
 	HH          HHConfig          `yaml:"hh"`
 	Scheduler   SchedulerConfig   `yaml:"scheduler"`
+	Storage     StorageConfig     `yaml:"storage"`
+	Redis       RedisConfig       `yaml:"redis"`
+}
+
+type RedisConfig struct {
+	Addr     string `yaml:"addr"`
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
+}
+
+type StorageConfig struct {
+	Endpoint        string `yaml:"endpoint"`
+	AccessKey       string `yaml:"access_key"`
+	SecretKey       string `yaml:"secret_key"`
+	Bucket          string `yaml:"bucket"`
+	LogsRetainDays  int    `yaml:"logs_retain_days"`  // горячее хранение логов (дней)
+	VacsRetainDays  int    `yaml:"vacs_retain_days"`  // горячее хранение вакансий (дней)
+	ArchiveInterval int    `yaml:"archive_interval_hours"` // как часто архивировать
 }
 
 type ServerConfig struct {
@@ -44,7 +62,11 @@ type KafkaConfig struct {
 }
 
 type TopicConfig struct {
-	Vacancies string `yaml:"vacancies"`
+	Vacancies      string `yaml:"vacancies"`
+	ParseRequested string `yaml:"parse_requested"`
+	TokenUpdated   string `yaml:"token_updated"`
+	VacancyInput   string `yaml:"vacancy_input"`
+	VacancyOutput  string `yaml:"vacancy_output"`
 }
 
 type JWTConfig struct {

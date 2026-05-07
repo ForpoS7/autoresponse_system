@@ -3,11 +3,11 @@ import requests
 from kafka import KafkaConsumer, KafkaProducer
 
 KAFKA_BROKER = "localhost:9092"
-INPUT_TOPIC = "vacancy_input"
-OUTPUT_TOPIC = "vacancy_output"
+INPUT_TOPIC   = "vacancy_input"
+OUTPUT_TOPIC  = "vacancy_output"
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL = "qwen2.5:7b"
+MODEL      = "qwen2.5:7b"
 
 consumer = KafkaConsumer(
     INPUT_TOPIC,
@@ -26,61 +26,51 @@ def build_prompt(data: dict) -> str:
     return f"""
 Сгенерируй ОЧЕНЬ короткое сопроводительное письмо для отклика на вакансию.
 
-Входные данные:
-
 Название вакансии: "{data['title']}"
 Компания: "{data['company']}"
 Описание/требования: "{data['requirements']}"
 
 Жёсткие требования:
-
-2–3 предложения, не больше
-Без приветствий и подписей
-Без фраз: «с большим интересом», «уверен», «буду рад», «внести вклад»
-Текст должен выглядеть как написанный человеком, не HR и не нейросетью
-Прямо укажи, что есть релевантный опыт по вакансии {data['title']}
-Профессионально, но разговорно
-Только финальный текст письма
-Никаких комментариев, пояснений или советов
-Русский язык
-не оставляй в конце системный комментарий с [Ваше имя]
+- 2–3 предложения, не больше
+- Без приветствий и подписей
+- Без фраз: «с большим интересом», «уверен», «буду рад», «внести вклад»
+- Текст должен выглядеть как написанный человеком
+- Прямо укажи релевантный опыт по вакансии {data['title']}
+- Профессионально, но разговорно
+- Только финальный текст письма
+- Никаких комментариев и пояснений
+- Русский язык
 """
 
 def ask_ollama(prompt: str) -> str:
     response = requests.post(
         OLLAMA_URL,
-        json={
-            "model": MODEL,
-            "prompt": prompt,
-            "stream": False
-        },
+        json={"model": MODEL, "prompt": prompt, "stream": False},
         timeout=120
     )
-
     response.raise_for_status()
     return response.json()["response"].strip()
 
-print("Service started. Waiting Kafka messages...")
+print("generate_service started. Waiting for vacancy_input messages...")
 
 for message in consumer:
     try:
         data = message.value
-        print("Received:", data)
+        print(f"Received: correlationId={data.get('correlationId')} title={data.get('title')}")
 
         prompt = build_prompt(data)
-
         result_text = ask_ollama(prompt)
 
+        # correlationId обязательно прокидываем обратно —
+        # Go-сервис использует его для маршрутизации к нужной горутине
         output = {
-            "title": data["title"],
-            "company": data["company"],
-            "generated_text": result_text
+            "correlationId":  data.get("correlationId", ""),
+            "generated_text": result_text,
         }
 
         producer.send(OUTPUT_TOPIC, output)
         producer.flush()
-
-        print("Sent result to Kafka")
+        print(f"Sent to vacancy_output: correlationId={output['correlationId']}")
 
     except Exception as e:
-        print("Error:", e)
+        print(f"Error: {e}")

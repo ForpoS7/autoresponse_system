@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"time"
 
+	"github.com/lib/pq"
 	"hh_autoapply_service/internal/model"
 )
 
@@ -56,4 +57,41 @@ func (r *VacancyRepository) CreateMany(vacancies []model.Vacancy) error {
 	}
 
 	return tx.Commit()
+}
+
+// GetOldVacancies возвращает вакансии старше olderThanDays дней.
+func (r *VacancyRepository) GetOldVacancies(olderThanDays int) ([]model.Vacancy, error) {
+	query := `
+		SELECT id, title, employer, url, description,
+		       salary_from, salary_to, currency, region, user_id
+		FROM vacancies
+		WHERE created_at < NOW() - ($1 || ' days')::interval
+		ORDER BY created_at
+	`
+	rows, err := r.db.Query(query, olderThanDays)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var vacancies []model.Vacancy
+	for rows.Next() {
+		var v model.Vacancy
+		if err := rows.Scan(&v.ID, &v.Title, &v.Employer, &v.URL, &v.Description,
+			&v.SalaryFrom, &v.SalaryTo, &v.Currency, &v.Region, &v.UserID); err != nil {
+			return nil, err
+		}
+		vacancies = append(vacancies, v)
+	}
+	return vacancies, rows.Err()
+}
+
+// DeleteVacanciesByIDs удаляет вакансии после архивации в cold storage.
+func (r *VacancyRepository) DeleteVacanciesByIDs(ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	query := `DELETE FROM vacancies WHERE id::text = ANY($1)`
+	_, err := r.db.Exec(query, pq.Array(ids))
+	return err
 }

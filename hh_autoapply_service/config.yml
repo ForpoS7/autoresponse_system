@@ -13,7 +13,11 @@ kafka:
   brokers:
     - localhost:9092
   topic:
-    vacancies: vacancies.parsed
+    vacancies:       vacancies.parsed
+    parse_requested: parse.requested
+    token_updated:   token.updated
+    vacancy_input:   vacancy_input
+    vacancy_output:  vacancy_output
 
 jwt:
   secret: defaultSecretKeyForDevelopment11111111111111111111111111111111111111111111111111111111111
@@ -37,3 +41,19 @@ hh:
 scheduler:
   parser:
     cron: "" # Пустое значение отключает планировщик
+
+# Redis кеш
+redis:
+  addr:     "localhost:6379"
+  password: ""
+  db:       0
+
+# Хранилище данных
+storage:
+  endpoint:   "localhost:9000"   # MinIO S3 API (cold storage)
+  access_key: "minioadmin"
+  secret_key:  "minioadmin"
+  bucket:      "hh-archive"
+  logs_retain_days:      30   # auto_apply_logs живут в PostgreSQL 30 дней, потом → MinIO
+  vacs_retain_days:       7   # vacancies живут в PostgreSQL 7 дней, потом → MinIO
+  archive_interval_hours: 24  # архивация раз в сутки

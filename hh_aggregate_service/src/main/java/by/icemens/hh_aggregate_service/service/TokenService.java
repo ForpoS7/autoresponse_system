@@ -20,6 +20,7 @@ public class TokenService {
 
     private final HhTokenRepository hhTokenRepository;
     private final PlaywrightService playwrightService;
+    private final by.icemens.hh_aggregate_service.publish.TokenPublisher tokenPublisher;
 
     /**
      * Сохранение полного состояния сессии (storage state) в JSON формате
@@ -86,6 +87,9 @@ public class TokenService {
             String storageState = context.storageState();
             saveSessionState(userId, storageState);
             log.info("[OK] Состояние сессии сохранено в БД для пользователя: {}", userId);
+
+            // Публикуем событие — Go-сервис обновит локальный кеш без HTTP-вызова
+            tokenPublisher.publish(userId, storageState);
 
         } catch (Exception e) {
             log.error("Ошибка при извлечении токена: {}", e.getMessage(), e);

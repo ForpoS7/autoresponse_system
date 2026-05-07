@@ -1,48 +1,47 @@
-.PHONY: help start stop test clean build java go infra
+.PHONY: help infra stop auth java go build install-playwright test test-java clean logs ps
 
-# Цвета для вывода
-GREEN := \033[0;32m
+GREEN  := \033[0;32m
 YELLOW := \033[1;33m
-RED := \033[0;31m
-NC := \033[0m
+NC     := \033[0m
 
 help: ## Показать справку
-	@echo "$$(tput bold)HH AutoResponse System - Доступные команды$$(tput sgr0)"
-	@echo ""
-	@echo "$$(tput bold)Основные команды:$$(tput sgr0)"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
-	@echo ""
-	@echo "$$(tput bold)Пример использования:$$(tput sgr0)"
-	@echo "  make infra     # Запустить PostgreSQL + Kafka"
-	@echo "  make java      # Запустить Java сервис"
-	@echo "  make go        # Запустить Go сервис"
-	@echo "  make test      # Тестировать API"
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-infra: ## Запустить инфраструктуру (PostgreSQL + Kafka)
+# ─── Инфраструктура ───────────────────────────────────────────────────────────
+
+infra: ## Запустить всю инфраструктуру (PostgreSQL + Kafka + Auth + nginx)
 	@echo "$(YELLOW)Запуск инфраструктуры...$(NC)"
-	cd hh_aggregate_service && docker-compose up -d
+	docker-compose up -d
 	@echo "$(GREEN)✓ Инфраструктура запущена$(NC)"
-	@echo ""
-	@echo "Ожидание запуска PostgreSQL (10 сек)..."
+	@echo "Ожидание PostgreSQL (10 сек)..."
 	@sleep 10
-	@cd hh_aggregate_service && docker-compose ps
+	docker-compose ps
 
-stop: ## Остановить инфраструктуру
-	@echo "$(YELLOW)Остановка инфраструктуры...$(NC)"
-	cd hh_aggregate_service && docker-compose down
-	@echo "$(GREEN)✓ Инфраструктура остановлена$(NC)"
+stop: ## Остановить всю инфраструктуру
+	@echo "$(YELLOW)Остановка...$(NC)"
+	docker-compose down
+	@echo "$(GREEN)✓ Остановлено$(NC)"
 
-java: ## Запустить Java сервис (hh_aggregate_service)
-	@echo "$(YELLOW)Запуск Java сервиса на порту 8080...$(NC)"
+# ─── Сервисы (запуск на хосте) ────────────────────────────────────────────────
+
+java: ## Запустить Java сервис (hh_aggregate_service) на :8080
+	@echo "$(YELLOW)Запуск Java сервиса на :8080...$(NC)"
 	cd hh_aggregate_service && ./gradlew bootRun
 
-go: ## Запустить Go сервис (hh_autoapply_service)
-	@echo "$(YELLOW)Запуск Go сервиса на порту 8081...$(NC)"
+go: ## Запустить Go сервис (hh_autoapply_service) на :8081
+	@echo "$(YELLOW)Запуск Go сервиса на :8081...$(NC)"
 	cd hh_autoapply_service && go run cmd/main.go
 
-build: ## Собрать Go сервис
-	@echo "$(YELLOW)Сборка Go сервиса...$(NC)"
+auth: ## Запустить Auth сервис локально (вне Docker) на :8082
+	@echo "$(YELLOW)Запуск Auth сервиса на :8082...$(NC)"
+	cd auth_service && go run cmd/main.go
+
+# ─── Сборка ───────────────────────────────────────────────────────────────────
+
+build: ## Собрать Go и Auth сервисы
+	@echo "$(YELLOW)Сборка Go сервисов...$(NC)"
 	cd hh_autoapply_service && go build -o bin/hh_autoapply_service ./cmd/main.go
+	cd auth_service && go build -o bin/auth_service ./cmd/main.go
 	@echo "$(GREEN)✓ Сборка завершена$(NC)"
 
 install-playwright: ## Установить браузеры Playwright
@@ -50,24 +49,34 @@ install-playwright: ## Установить браузеры Playwright
 	cd hh_autoapply_service && go run github.com/playwright-community/playwright-go/cmd/playwright@latest install
 	@echo "$(GREEN)✓ Браузеры установлены$(NC)"
 
-test: ## Тестировать API Go сервиса
-	@echo "$(YELLOW)Тестирование API...$(NC)"
-	./test-api.sh
+# ─── Тестирование ─────────────────────────────────────────────────────────────
 
-test-java: ## Тестировать API Java сервиса
-	@echo "$(YELLOW)Тестирование API Java сервиса...$(NC)"
+test: ## Тестировать API через nginx Gateway (:80)
+	@echo "$(YELLOW)Тестирование через API Gateway...$(NC)"
+	./test-api.sh 80
+
+test-java: ## Тестировать Java API напрямую (:8080)
+	@echo "$(YELLOW)Тестирование Java сервиса напрямую...$(NC)"
 	./test-api.sh 8080
 
-clean: ## Очистить временные файлы
+test-auth: ## Проверить Auth сервис
+	@echo "$(YELLOW)Тест регистрации через Gateway...$(NC)"
+	curl -s -X POST http://localhost/auth/register \
+		-H "Content-Type: application/json" \
+		-d '{"email":"test@example.com","password":"secret123"}' | cat
+	@echo ""
+
+# ─── Обслуживание ─────────────────────────────────────────────────────────────
+
+logs: ## Логи всех Docker контейнеров
+	docker-compose logs -f
+
+ps: ## Статус Docker контейнеров
+	docker-compose ps
+
+clean: ## Очистить артефакты сборки
 	@echo "$(YELLOW)Очистка...$(NC)"
 	cd hh_autoapply_service && go clean
-	rm -rf hh_autoapply_service/bin/
+	cd auth_service && go clean
+	rm -rf hh_autoapply_service/bin/ auth_service/bin/
 	@echo "$(GREEN)✓ Очистка завершена$(NC)"
-
-logs: ## Показать логи Docker контейнеров
-	@echo "$(YELLOW)Логи инфраструктуры...$(NC)"
-	cd hh_aggregate_service && docker-compose logs -f
-
-ps: ## Показать статус Docker контейнеров
-	@echo "$(YELLOW)Статус контейнеров...$(NC)"
-	cd hh_aggregate_service && docker-compose ps

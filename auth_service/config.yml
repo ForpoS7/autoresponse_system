@@ -1,0 +1,14 @@
+server:
+  port: 8082
+
+database:
+  host: postgres      # имя контейнера в docker-compose; для локального запуска — localhost
+  port: 5432          # внутренний порт контейнера (не 5444)
+  name: hh
+  user: postgres
+  password: postgres
+  sslmode: disable
+
+jwt:
+  secret: "defaultSecretKeyForDevelopment_mustBeAtLeast256BitsLong_replaceInProd"
+  expiration: 86400000  # 24 часа в миллисекундах

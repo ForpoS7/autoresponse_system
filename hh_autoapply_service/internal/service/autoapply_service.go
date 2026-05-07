@@ -3,10 +3,9 @@ package service
 import (
 	"context"
 	"fmt"
+	"hh_autoapply_service/internal/cache"
 	"hh_autoapply_service/internal/model"
 	"hh_autoapply_service/internal/repository"
-	"hh_autoapply_service/pkg/ai"
-	"hh_autoapply_service/pkg/httpclient"
 	"hh_autoapply_service/pkg/kafka"
 	"log"
 	"math/rand"
@@ -15,39 +14,46 @@ import (
 	playwrightgo "github.com/playwright-community/playwright-go"
 )
 
+// fallbackLetters используются когда generate_service не ответил за 30 секунд.
+var fallbackLetters = []string{
+	"Имею релевантный опыт по данной позиции. Готов обсудить детали на собеседовании.",
+	"Опыт соответствует требованиям вакансии. Буду рад рассмотреть предложение.",
+	"Мой background хорошо подходит для этой роли. Готов к диалогу.",
+}
+
 type AutoApplyService struct {
-	parserService      *ParserService
 	playwrightService  *PlaywrightService
-	coverLetterService *ai.MockCoverLetterService
 	autoApplyRepo      *repository.AutoApplyRepository
 	vacancyRepo        *repository.VacancyRepository
 	hhTokenRepo        *repository.HhTokenRepository
-	kafkaConsumer      *kafka.Consumer
-	hhClient           *httpclient.HHAggregateClient
-	javaServiceToken   string
+	tokenCache         *cache.TokenCache
+	parsePublisher     *kafka.ParsePublisher
+	vacancyCorrelator  *kafka.VacancyCorrelator
+	letterPublisher    *kafka.LetterPublisher
+	letterCorrelator   *kafka.LetterCorrelator
 }
 
 func NewAutoApplyService(
-	parserService *ParserService,
 	playwrightService *PlaywrightService,
-	coverLetterService *ai.MockCoverLetterService,
 	autoApplyRepo *repository.AutoApplyRepository,
 	vacancyRepo *repository.VacancyRepository,
 	hhTokenRepo *repository.HhTokenRepository,
-	kafkaConsumer *kafka.Consumer,
-	hhClient *httpclient.HHAggregateClient,
-	javaServiceToken string,
+	tokenCache *cache.TokenCache,
+	parsePublisher *kafka.ParsePublisher,
+	vacancyCorrelator *kafka.VacancyCorrelator,
+	letterPublisher *kafka.LetterPublisher,
+	letterCorrelator *kafka.LetterCorrelator,
 ) *AutoApplyService {
 	return &AutoApplyService{
-		parserService:      parserService,
-		playwrightService:  playwrightService,
-		coverLetterService: coverLetterService,
-		autoApplyRepo:      autoApplyRepo,
-		vacancyRepo:        vacancyRepo,
-		hhTokenRepo:        hhTokenRepo,
-		kafkaConsumer:      kafkaConsumer,
-		hhClient:           hhClient,
-		javaServiceToken:   javaServiceToken,
+		playwrightService: playwrightService,
+		autoApplyRepo:     autoApplyRepo,
+		vacancyRepo:       vacancyRepo,
+		hhTokenRepo:       hhTokenRepo,
+		tokenCache:        tokenCache,
+		parsePublisher:    parsePublisher,
+		vacancyCorrelator: vacancyCorrelator,
+		letterPublisher:   letterPublisher,
+		letterCorrelator:  letterCorrelator,
 	}
 }
 
@@ -64,271 +70,200 @@ func (s *AutoApplyService) CreateAutoApplyRequest(ctx context.Context, userID in
 		return nil, err
 	}
 
-	// Запускаем процесс автоотклика в горутине с фоновым контекстом
 	go s.processAutoApply(context.Background(), req)
 
 	return req, nil
 }
 
 func (s *AutoApplyService) processAutoApply(ctx context.Context, req *model.AutoApplyRequest) {
-	log.Printf("Starting auto-apply process for request %d, user %d", req.ID, req.UserID)
+	log.Printf("[autoapply] start requestId=%d userId=%d query=%s", req.ID, req.UserID, req.Query)
 
 	req.Status = "processing"
 	if err := s.autoApplyRepo.UpdateRequest(req); err != nil {
-		log.Printf("Failed to update request status: %v", err)
+		log.Printf("[autoapply] status update error: %v", err)
 	}
 
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("Panic in auto-apply process: %v", r)
+			log.Printf("[autoapply] panic: %v", r)
 			req.Status = "failed"
 			s.autoApplyRepo.UpdateRequest(req)
 		}
 	}()
 
-	// Получаем токен HH.ru из Java сервиса (storageState JSON)
-	hhToken, err := s.getHHTokenFromJava(ctx, req.UserID)
-	if err != nil {
-		log.Printf("Failed to get HH token from Java service for user %d: %v", req.UserID, err)
+	// 1. Получаем HH-токен из кеша (не HTTP-вызов к Java)
+	hhToken, err := s.getHHToken(ctx, req.UserID)
+	if err != nil || len(hhToken) < 100 {
+		log.Printf("[autoapply] no HH token for userId=%d: %v", req.UserID, err)
 		req.Status = "failed"
 		s.autoApplyRepo.UpdateRequest(req)
 		return
 	}
 
-	// Проверяем что токен не пустой
-	if hhToken == "" || len(hhToken) < 100 {
-		log.Printf("HH token is empty or too short (%d chars). Please run POST /api/hh-token first", len(hhToken))
-		req.Status = "failed"
-		s.autoApplyRepo.UpdateRequest(req)
-		return
-	}
-
-	log.Printf("Got HH token (storageState) from Java service for user %d, length: %d", req.UserID, len(hhToken))
-
-	// Сохраняем токен локально
-	if err := s.hhTokenRepo.Save(&model.HhToken{
-		UserID:     req.UserID,
-		TokenValue: hhToken,
+	// 2. Публикуем запрос на парсинг в Java через Kafka (EDA вместо ожидания вслепую)
+	jobID := fmt.Sprintf("autoapply-%d", req.ID)
+	if err := s.parsePublisher.Publish(ctx, kafka.ParseRequestMessage{
+		JobID:  jobID,
+		Query:  req.Query,
+		Page:   0,
+		UserID: req.UserID,
 	}); err != nil {
-		log.Printf("Failed to save HH token locally: %v", err)
-	}
-
-	// Получаем вакансии из Kafka (ждем пока все спарсятся)
-	log.Printf("Getting vacancies from Kafka topic: vacancies.parsed")
-	vacancies, err := s.kafkaConsumer.ConsumeVacanciesBatchAndWait(ctx, 5*time.Minute, 10*time.Second)
-	if err != nil {
-		log.Printf("Failed to get vacancies from Kafka: %v", err)
+		log.Printf("[autoapply] parse.requested publish error: %v", err)
 		req.Status = "failed"
 		s.autoApplyRepo.UpdateRequest(req)
 		return
 	}
+	log.Printf("[autoapply] parse.requested sent: jobId=%s", jobID)
 
-	if len(vacancies) == 0 {
-		log.Printf("No vacancies received from Kafka")
-		req.Status = "completed"
+	// 3. Ждём вакансии с нашим jobId (не 5 минут вслепую, а детерминированно)
+	vacancies, err := s.vacancyCorrelator.WaitForJob(jobID, 2*time.Minute)
+	if err != nil {
+		log.Printf("[autoapply] no vacancies for jobId=%s: %v", jobID, err)
+		req.Status = "failed"
 		s.autoApplyRepo.UpdateRequest(req)
 		return
 	}
+	log.Printf("[autoapply] received %d vacancies for jobId=%s", len(vacancies), jobID)
 
-	log.Printf("Received %d vacancies from Kafka, filtering for user %d", len(vacancies), req.UserID)
-
-	// Фильтруем вакансии по user_id
-	var filteredVacancies []model.Vacancy
-	for _, v := range vacancies {
-		if v.UserID == req.UserID {
-			filteredVacancies = append(filteredVacancies, v)
-		}
-	}
-
-	if len(filteredVacancies) == 0 {
-		log.Printf("No vacancies found for user %d after filtering", req.UserID)
-		req.Status = "completed"
-		s.autoApplyRepo.UpdateRequest(req)
-		return
-	}
-
-	log.Printf("Filtered to %d vacancies for user %d", len(filteredVacancies), req.UserID)
-	vacancies = filteredVacancies
-
-	if len(vacancies) == 0 {
-		log.Printf("No vacancies found")
-		req.Status = "completed"
-		s.autoApplyRepo.UpdateRequest(req)
-		return
-	}
-
-	log.Printf("Found %d vacancies to apply", len(vacancies))
-
+	// 4. Откликаемся
 	for _, vacancy := range vacancies {
 		if req.AppliedCount >= req.ApplyCount {
-			log.Printf("Reached apply count limit (%d), stopping", req.ApplyCount)
 			break
 		}
 
-		success, err := s.applyToVacancy(ctx, req, vacancy, hhToken)
+		letter := s.generateLetter(ctx, vacancy, req.Query)
+
+		success, err := s.applyToVacancy(ctx, req, vacancy, hhToken, letter)
 		if err != nil {
-			log.Printf("Failed to apply to vacancy %d: %v", vacancy.ID, err)
-			s.createLog(req.ID, vacancy.ID, vacancy.URL, "", "failed", err.Error())
+			log.Printf("[autoapply] vacancy %s error: %v", vacancy.ID, err)
+			s.createLog(req.ID, vacancy, letter, "failed", err.Error())
 		} else if success {
 			req.AppliedCount++
-			s.createLog(req.ID, vacancy.ID, vacancy.URL, "", "success", "")
-			// Обновляем счетчик в базе данных после каждого успешного отклика
+			s.createLog(req.ID, vacancy, letter, "success", "")
 			s.autoApplyRepo.UpdateRequest(req)
-			log.Printf("Successfully applied to vacancy %d, total applied: %d/%d", vacancy.ID, req.AppliedCount, req.ApplyCount)
+			log.Printf("[autoapply] applied %d/%d", req.AppliedCount, req.ApplyCount)
 		}
 
-		// Добавляем задержку между откликами (5-10 секунд + случайная вариация)
-		// Это нужно чтобы избежать блокировки со стороны HH.ru
-		delaySeconds := 5 + rand.Intn(5) // от 5 до 9 секунд
-		log.Printf("Waiting %d seconds before next application...", delaySeconds)
-		time.Sleep(time.Duration(delaySeconds) * time.Second)
+		delay := 5 + rand.Intn(5)
+		time.Sleep(time.Duration(delay) * time.Second)
 	}
 
 	req.Status = "completed"
 	s.autoApplyRepo.UpdateRequest(req)
-	log.Printf("Auto-apply process completed for request %d. Applied to %d vacancies", req.ID, req.AppliedCount)
+	log.Printf("[autoapply] done requestId=%d applied=%d", req.ID, req.AppliedCount)
 }
 
-func (s *AutoApplyService) getHHTokenFromJava(ctx context.Context, userID int64) (string, error) {
-	log.Printf("Getting HH token from Java service for user %d", userID)
+// getHHToken читает токен из кеша, при miss — из БД.
+// HTTP-вызова к Java сервису больше нет.
+func (s *AutoApplyService) getHHToken(ctx context.Context, userID int64) (string, error) {
+	if token, ok := s.tokenCache.Get(userID); ok {
+		log.Printf("[autoapply] HH token from cache for userId=%d", userID)
+		return token, nil
+	}
 
-	tokenResp, err := s.hhClient.GetHHToken(ctx, userID, s.javaServiceToken)
+	log.Printf("[autoapply] HH token cache miss, loading from DB for userId=%d", userID)
+	hhToken, err := s.hhTokenRepo.GetByUserID(userID)
 	if err != nil {
-		return "", fmt.Errorf("failed to get token from Java service: %w", err)
+		return "", fmt.Errorf("token not found in DB: %w", err)
 	}
 
-	log.Printf("Got HH token from Java service for user %d", userID)
-	return tokenResp.TokenValue, nil
+	s.tokenCache.Set(userID, hhToken.TokenValue)
+	return hhToken.TokenValue, nil
 }
 
-func (s *AutoApplyService) getVacanciesFromJava(ctx context.Context, req *model.AutoApplyRequest) ([]model.Vacancy, error) {
-	log.Printf("Getting vacancies from Kafka topic: vacancies.parsed")
+// generateLetter запрашивает письмо через Kafka и ждёт 30 секунд.
+// При таймауте — возвращает fallback шаблон.
+func (s *AutoApplyService) generateLetter(ctx context.Context, vacancy model.Vacancy, query string) string {
+	corrID := fmt.Sprintf("letter-%s-%d", vacancy.ID, time.Now().UnixNano())
 
-	// Ждем вакансии из Kafka: максимум 5 минут, idle timeout 10 секунд (если нет новых сообщений 10 сек - считаем что все)
-	vacancies, err := s.kafkaConsumer.ConsumeVacanciesBatchAndWait(ctx, 5*time.Minute, 10*time.Second)
+	if err := s.letterPublisher.Publish(ctx, kafka.LetterRequest{
+		CorrelationID: corrID,
+		Title:         vacancy.Title,
+		Company:       vacancy.Employer,
+		Requirements:  vacancy.Description,
+	}); err != nil {
+		log.Printf("[autoapply] vacancy_input publish error: %v", err)
+		return fallbackLetter()
+	}
+
+	letter, err := s.letterCorrelator.WaitForLetter(corrID, 30*time.Second)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get vacancies from Kafka: %w", err)
+		log.Printf("[autoapply] letter timeout for corrId=%s, using fallback", corrID)
+		return fallbackLetter()
 	}
 
-	if len(vacancies) == 0 {
-		log.Printf("No vacancies received from Kafka")
-		return []model.Vacancy{}, nil
-	}
-
-	log.Printf("Received %d vacancies from Kafka, filtering for user %d", len(vacancies), req.UserID)
-
-	// Фильтруем вакансии по user_id (если нужно)
-	var filteredVacancies []model.Vacancy
-	for _, v := range vacancies {
-		if v.UserID == req.UserID {
-			filteredVacancies = append(filteredVacancies, v)
-		}
-	}
-
-	log.Printf("Filtered to %d vacancies for user %d", len(filteredVacancies), req.UserID)
-	return filteredVacancies, nil
+	return letter
 }
 
-func (s *AutoApplyService) applyToVacancy(ctx context.Context, req *model.AutoApplyRequest, vacancy model.Vacancy, hhToken string) (bool, error) {
-	log.Printf("Applying to vacancy: %s, URL: %s", vacancy.Title, vacancy.URL)
-	log.Printf("HH token length: %d characters", len(hhToken))
+func fallbackLetter() string {
+	return fallbackLetters[rand.Intn(len(fallbackLetters))]
+}
 
-	// Получаем страницу браузера с восстановленной сессией HH.ru
+func (s *AutoApplyService) applyToVacancy(ctx context.Context, req *model.AutoApplyRequest, vacancy model.Vacancy, hhToken, letter string) (bool, error) {
+	log.Printf("[autoapply] applying to: %s (%s)", vacancy.Title, vacancy.URL)
+
 	browserPage, err := s.playwrightService.GetPageWithToken(ctx, req.UserID, hhToken)
 	if err != nil {
-		return false, fmt.Errorf("failed to get browser page: %w", err)
+		return false, fmt.Errorf("browser page error: %w", err)
 	}
 	defer browserPage.Close()
 
 	pg := browserPage.Page
 
-	// Переходим на страницу вакансии
 	if _, err := pg.Goto(vacancy.URL); err != nil {
-		return false, fmt.Errorf("failed to navigate to vacancy: %w", err)
+		return false, fmt.Errorf("navigation error: %w", err)
 	}
-
 	if err := pg.WaitForLoadState(); err != nil {
-		return false, fmt.Errorf("failed to wait for page load: %w", err)
+		return false, fmt.Errorf("page load error: %w", err)
 	}
 
-	// Даем странице время на загрузку
 	time.Sleep(2 * time.Second)
 
-	// Ищем кнопку отклика. Это ссылка с data-qa="vacancy-response-link-top"
-	// Находится в блоке .vacancy-actions.vacancy-actions_applicant
 	applyButton, err := pg.QuerySelector("[data-qa='vacancy-response-link-top'], .vacancy-actions a:text('Откликнуться')")
-	if err != nil {
-		return false, fmt.Errorf("failed to find apply button: %w", err)
-	}
-
-	if applyButton == nil {
-		// Кнопка не найдена - возможно мы не авторизованы или это не та страница
-		log.Printf("Apply button not found - checking authorization...")
-		loginBtn, _ := pg.QuerySelector("[href='/login']")
-		if loginBtn != nil {
-			log.Printf("Found login button - not authorized")
-		}
-		return false, fmt.Errorf("apply button not found - may not be authorized or wrong page")
-	}
-
-	log.Printf("Successfully found apply button - proceeding with application")
-
-	coverLetter, err := s.coverLetterService.GenerateCoverLetter(ctx, vacancy, req.Query)
-	if err != nil {
-		log.Printf("Failed to generate cover letter: %v", err)
-		coverLetter = ""
+	if err != nil || applyButton == nil {
+		return false, fmt.Errorf("apply button not found")
 	}
 
 	if err := applyButton.Click(); err != nil {
-		return false, fmt.Errorf("failed to click apply button: %w", err)
+		return false, fmt.Errorf("click error: %w", err)
 	}
 
-	log.Printf("Clicked apply button on vacancy page, waiting for modal...")
+	time.Sleep(time.Second)
 
-	// Даем время на появление модального окна (если оно есть)
-	time.Sleep(1 * time.Second)
-
-	// Пробуем найти кнопку подтверждения в модальном окне (оно появляется не всегда)
-	confirmButton, err := pg.QuerySelector(".magritte-modal-footer button[type='submit'], button:text('Откликнуться'), button:text('Confirm')")
+	confirmButton, err := pg.QuerySelector(".magritte-modal-footer button[type='submit'], button:text('Откликнуться')")
 	if err == nil && confirmButton != nil {
-		log.Printf("Found confirm button in modal, clicking...")
 		if err := confirmButton.Click(); err != nil {
-			return false, fmt.Errorf("failed to click confirm button: %w", err)
+			return false, fmt.Errorf("confirm click error: %w", err)
 		}
-		log.Printf("Successfully clicked confirm button in modal")
-	} else {
-		log.Printf("No modal window found - application submitted directly")
 	}
 
-	// Если есть сопроводительное письмо, заполняем его
-	if coverLetter != "" {
+	if letter != "" {
 		textarea, err := pg.WaitForSelector("textarea", playwrightgo.PageWaitForSelectorOptions{
 			Timeout: playwrightgo.Float(5000),
 		})
 		if err == nil && textarea != nil {
-			if err := textarea.Fill(coverLetter); err != nil {
-				log.Printf("Failed to fill cover letter: %v", err)
-			}
+			textarea.Fill(letter) //nolint
 		}
 	}
 
-	// Даем время на обработку отклика
-	time.Sleep(1 * time.Second)
-
+	time.Sleep(time.Second)
 	return true, nil
 }
 
-func (s *AutoApplyService) createLog(requestID, vacancyID int64, vacancyURL, coverLetter, status, errorMessage string) {
-	logEntry := &model.AutoApplyLog{
+func (s *AutoApplyService) createLog(requestID int64, vacancy model.Vacancy, letter, status, errMsg string) {
+	vacancyID := int64(0)
+	fmt.Sscanf(vacancy.ID, "%d", &vacancyID)
+
+	entry := &model.AutoApplyLog{
 		RequestID:    requestID,
 		VacancyID:    vacancyID,
-		VacancyURL:   vacancyURL,
-		CoverLetter:  coverLetter,
+		VacancyURL:   vacancy.URL,
+		CoverLetter:  letter,
 		Status:       status,
-		ErrorMessage: errorMessage,
+		ErrorMessage: errMsg,
 	}
-	if err := s.autoApplyRepo.CreateLog(logEntry); err != nil {
-		log.Printf("Failed to create log entry: %v", err)
+	if err := s.autoApplyRepo.CreateLog(entry); err != nil {
+		log.Printf("[autoapply] log error: %v", err)
 	}
 }
 
