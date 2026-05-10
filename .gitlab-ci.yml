@@ -1,0 +1,147 @@
+# GitLab CI — альтернатива GitHub Actions.
+# Requires: GitLab Runner с executor=kubernetes в namespace cicd.
+#
+# Переменные (Settings → CI/CD → Variables):
+#   REGISTRY        = registry.cicd.svc.cluster.local:5000
+#   ARGOCD_SERVER   = argocd-server.argocd.svc.cluster.local:80
+#   ARGOCD_TOKEN    = (ArgoCD API token)
+
+stages:
+  - build
+  - update-chart
+  - deploy
+
+variables:
+  REGISTRY: "registry.cicd.svc.cluster.local:5000"
+  KANIKO_IMAGE: "gcr.io/kaniko-project/executor:debug"
+
+# ── Шаблон Kaniko-сборки (reusable) ─────────────────────────────────────────
+.kaniko-build:
+  image:
+    name: $KANIKO_IMAGE
+    entrypoint: [""]
+  script:
+    - mkdir -p /kaniko/.docker
+    - echo '{"auths":{"'$REGISTRY'":{"auth":""}}}' > /kaniko/.docker/config.json
+    - /kaniko/executor
+        --context "$CI_PROJECT_DIR/$BUILD_CONTEXT"
+        --dockerfile "$CI_PROJECT_DIR/$BUILD_CONTEXT/Dockerfile"
+        --destination "$REGISTRY/$SERVICE_NAME:$CI_COMMIT_SHA"
+        --insecure
+        --cache=true
+        --cache-repo "$REGISTRY/cache/$SERVICE_NAME"
+
+# ── Шаблон обновления Helm чарта ────────────────────────────────────────────
+.update-chart:
+  image: mikefarah/yq:4
+  script:
+    - yq -i '.image.tag = "'$CI_COMMIT_SHA'"' k8s/charts/$SERVICE_NAME/values.yaml
+    - apk add --no-cache git openssh
+    - git config user.email "ci@autoresponse.local"
+    - git config user.name "GitLab CI"
+    - git add k8s/charts/$SERVICE_NAME/values.yaml
+    - git diff --cached --quiet || git commit -m "ci($SERVICE_NAME) → $CI_COMMIT_SHA"
+    - git push "https://oauth2:$CI_JOB_TOKEN@$CI_SERVER_HOST/$CI_PROJECT_PATH.git" HEAD:$CI_COMMIT_REF_NAME
+
+# ── auth-service ─────────────────────────────────────────────────────────────
+build:auth-service:
+  extends: .kaniko-build
+  stage: build
+  variables:
+    BUILD_CONTEXT: auth_service
+    SERVICE_NAME: auth-service
+  rules:
+    - changes: [auth_service/**]
+
+chart:auth-service:
+  extends: .update-chart
+  stage: update-chart
+  variables:
+    SERVICE_NAME: auth-service
+  needs: [build:auth-service]
+  rules:
+    - changes: [auth_service/**]
+
+# ── autoapply-service ────────────────────────────────────────────────────────
+build:autoapply-service:
+  extends: .kaniko-build
+  stage: build
+  variables:
+    BUILD_CONTEXT: hh_autoapply_service
+    SERVICE_NAME: autoapply-service
+  rules:
+    - changes: [hh_autoapply_service/**]
+
+chart:autoapply-service:
+  extends: .update-chart
+  stage: update-chart
+  variables:
+    SERVICE_NAME: autoapply-service
+  needs: [build:autoapply-service]
+  rules:
+    - changes: [hh_autoapply_service/**]
+
+# ── aggregate-service ────────────────────────────────────────────────────────
+build:aggregate-service:
+  extends: .kaniko-build
+  stage: build
+  variables:
+    BUILD_CONTEXT: hh_aggregate_service
+    SERVICE_NAME: aggregate-service
+  rules:
+    - changes: [hh_aggregate_service/**]
+
+chart:aggregate-service:
+  extends: .update-chart
+  stage: update-chart
+  variables:
+    SERVICE_NAME: aggregate-service
+  needs: [build:aggregate-service]
+  rules:
+    - changes: [hh_aggregate_service/**]
+
+# ── generate-service ─────────────────────────────────────────────────────────
+build:generate-service:
+  extends: .kaniko-build
+  stage: build
+  variables:
+    BUILD_CONTEXT: generate_service
+    SERVICE_NAME: generate-service
+  rules:
+    - changes: [generate_service/**]
+
+chart:generate-service:
+  extends: .update-chart
+  stage: update-chart
+  variables:
+    SERVICE_NAME: generate-service
+  needs: [build:generate-service]
+  rules:
+    - changes: [generate_service/**]
+
+# ── ArgoCD Sync ──────────────────────────────────────────────────────────────
+deploy:argocd-sync:
+  stage: deploy
+  image: argoproj/argocd:latest
+  script:
+    - argocd app sync autoresponse
+        --server $ARGOCD_SERVER
+        --auth-token $ARGOCD_TOKEN
+        --insecure
+        --timeout 120
+    - argocd app wait autoresponse
+        --server $ARGOCD_SERVER
+        --auth-token $ARGOCD_TOKEN
+        --insecure
+        --timeout 300
+  needs:
+    - job: chart:auth-service
+      optional: true
+    - job: chart:autoapply-service
+      optional: true
+    - job: chart:aggregate-service
+      optional: true
+    - job: chart:generate-service
+      optional: true
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"

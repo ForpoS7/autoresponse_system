@@ -1,0 +1,57 @@
+# Grafana Tempo — distributed tracing backend.
+# Режим: monolithic (одна Pod для всего).
+# Принимает трейсы через OTLP (gRPC :4317, HTTP :4318).
+# Запросы от Grafana через HTTP :3100.
+
+tempo:
+  reportingEnabled: false
+
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+
+  # Генерация RED метрик из трейсов (Rate, Errors, Duration)
+  # → отправляются в VictoriaMetrics для dashboard-ов
+  metricsGenerator:
+    enabled: true
+    remoteWriteUrl: http://victoria-metrics-single-server.monitoring.svc.cluster.local:8428/api/v1/write
+    processor:
+      service_graphs:
+        enabled: true
+      span_metrics:
+        enabled: true
+
+  # Включить поиск трейсов по атрибутам (span search)
+  querier:
+    frontend_worker:
+      frontend_address: ""
+
+tempoQuery:
+  enabled: false    # используем Grafana datasource, не отдельный UI
+
+# Монолитный режим
+singleBinary:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  persistence:
+    enabled: false
+
+# Компоненты distributed режима
+distributor:
+  replicas: 0
+ingester:
+  replicas: 0
+querier:
+  replicas: 0
+queryFrontend:
+  replicas: 0
+compactor:
+  replicas: 0

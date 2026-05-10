@@ -1,0 +1,16 @@
+# Скопировать в terraform.tfvars и заполнить реальными значениями.
+# terraform.tfvars добавлен в .gitignore — не коммитить!
+
+kubeconfig_path   = "~/.kube/config"
+kube_context      = "k3d-autoresponse"
+environment       = "dev"
+
+postgres_user     = "postgres"
+postgres_db       = "autoresponse"
+postgres_host     = "postgres.autoresponse.svc.cluster.local"
+postgres_port     = 5432
+postgres_password = "CHANGE_ME"
+
+jwt_secret        = "CHANGE_ME_min_32_characters_long_secret_key"
+
+kafka_bootstrap   = "autoresponse-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"

@@ -1,0 +1,58 @@
+# Promtail — агент сбора логов.
+# Запускается как DaemonSet на каждой ноде.
+# Читает файлы /var/log/pods/* и отправляет в Loki.
+# Автоматически добавляет лейблы: namespace, pod, container, app.
+
+config:
+  logLevel: warn
+  serverPort: 3101
+
+  clients:
+    - url: http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
+      tenant_id: autoresponse   # single-tenant (auth_enabled=false в Loki игнорирует это)
+      batch_wait: 1s
+      batch_size: 1048576
+
+  snippets:
+    # CRI формат (containerd) — используется в k3d
+    pipelineStages:
+      - cri: {}
+
+      # Парсинг JSON-логов Go сервисов (если они логируют в JSON)
+      - match:
+          selector: '{app=~"autoapply-service|auth-service"}'
+          stages:
+            - json:
+                expressions:
+                  level: level
+                  msg: msg
+                  ts: ts
+            - labels:
+                level:
+
+      # Парсинг Spring Boot логов
+      - match:
+          selector: '{app="aggregate-service"}'
+          stages:
+            - regex:
+                expression: '^(?P<timestamp>\S+)\s+(?P<level>\w+)\s+(?P<pid>\d+)\s+---\s+\[(?P<thread>[^\]]+)\]\s+(?P<logger>\S+)\s+:\s+(?P<message>.*)$'
+            - labels:
+                level:
+                logger:
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+# DaemonSet — нужен доступ к логам всех нод
+tolerations:
+  - operator: Exists
+    effect: NoSchedule
+
+# Дополнительные метаданные из k8s API для каждой записи лога
+serviceMonitor:
+  enabled: false    # метрики Promtail → VictoriaMetrics через аннотации

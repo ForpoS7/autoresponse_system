@@ -1,0 +1,14 @@
+# PeerAuthentication — политика mTLS для всего неймспейса autoresponse.
+#
+# STRICT: входящие соединения ДОЛЖНЫ иметь mTLS-сертификат Istio.
+# Это означает что любой сервис вне mesh (без sidecar) не сможет обратиться
+# к сервисам в namespace. Обмен сертификатами автоматический через istiod.
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: autoresponse
+spec:
+  mtls:
+    mode: STRICT

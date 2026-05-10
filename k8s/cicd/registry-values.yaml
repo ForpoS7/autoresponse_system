@@ -1,0 +1,43 @@
+# Docker Registry v2 (twuni/docker-registry) — локальный образ-регистри.
+# После деплоя: registry.cicd.svc.cluster.local:5000
+#
+# k3d-ноды должны доверять этому регистри (без TLS).
+# Настраивается в k3d через: k3d cluster create --registry-use k3d-registry:5000
+
+replicaCount: 1
+
+image:
+  repository: registry
+  tag: "2"
+
+service:
+  type: NodePort
+  port: 5000
+  nodePort: 30050    # localhost:30050 для push с хоста
+
+persistence:
+  enabled: false     # для k3d (в prod: enabled:true + storageClass)
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+# Разрешить push без TLS (только для локального dev!)
+configData:
+  http:
+    addr: :5000
+    debug:
+      addr: :5001
+      prometheus:
+        enabled: true
+  storage:
+    filesystem:
+      rootdirectory: /var/lib/registry
+    delete:
+      enabled: true
+  log:
+    level: warn

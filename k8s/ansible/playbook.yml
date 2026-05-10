@@ -1,0 +1,16 @@
+---
+# Задание 2.3 — автоматизированный деплой Kafka через Strimzi оператор.
+#
+# Запуск:
+#   ansible-galaxy collection install -r k8s/ansible/requirements.yml
+#   ansible-playbook k8s/ansible/playbook.yml
+#
+# Переопределить переменные:
+#   ansible-playbook k8s/ansible/playbook.yml -e kafka_replicas=3
+
+- name: Deploy Kafka via Strimzi operator
+  hosts: localhost
+  gather_facts: false
+
+  roles:
+    - role: kafka_strimzi

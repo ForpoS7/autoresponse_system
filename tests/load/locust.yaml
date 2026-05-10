@@ -1,0 +1,137 @@
+---
+# Namespace для нагрузочного тестирования — отдельно от autoresponse
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: loadtest
+  labels:
+    istio-injection: enabled   # Envoy sidecar для метрик latency
+
+---
+# ConfigMap с locustfile (обновить командой: kubectl create configmap locust-scripts ...)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: locust-scripts
+  namespace: loadtest
+data:
+  locustfile.py: |
+    # Содержимое генерируется из tests/load/locustfile.py при деплое.
+    # См. run.ps1 → шаг "kubectl create configmap".
+    pass
+
+---
+# Locust Master — Web UI + координация воркеров
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: locust-master
+  namespace: loadtest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: locust
+      role: master
+  template:
+    metadata:
+      labels:
+        app: locust
+        role: master
+    spec:
+      containers:
+        - name: locust
+          image: locustio/locust:2.24.0
+          args:
+            - -f /scripts/locustfile.py
+            - --master
+            - --host=$(TARGET_HOST)
+          env:
+            - name: TARGET_HOST
+              value: "http://istio-ingressgateway.istio-ingress.svc.cluster.local"
+          ports:
+            - name: web
+              containerPort: 8089
+            - name: master-p1
+              containerPort: 5557
+            - name: master-p2
+              containerPort: 5558
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: scripts
+          configMap:
+            name: locust-scripts
+
+---
+# Locust Workers — фактически выполняют HTTP-запросы
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: locust-worker
+  namespace: loadtest
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: locust
+      role: worker
+  template:
+    metadata:
+      labels:
+        app: locust
+        role: worker
+    spec:
+      containers:
+        - name: locust
+          image: locustio/locust:2.24.0
+          args:
+            - -f /scripts/locustfile.py
+            - --worker
+            - --master-host=locust-master
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+          resources:
+            requests:
+              cpu: 200m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+      volumes:
+        - name: scripts
+          configMap:
+            name: locust-scripts
+
+---
+# Service для доступа к Locust Web UI
+apiVersion: v1
+kind: Service
+metadata:
+  name: locust-master
+  namespace: loadtest
+spec:
+  type: NodePort
+  selector:
+    app: locust
+    role: master
+  ports:
+    - name: web
+      port: 8089
+      targetPort: 8089
+      nodePort: 31089
+    - name: master-p1
+      port: 5557
+      targetPort: 5557
+    - name: master-p2
+      port: 5558
+      targetPort: 5558

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: aggregate-service
+description: Java Spring Boot HH.ru vacancy aggregator — Playwright, Kafka, Scheduler
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

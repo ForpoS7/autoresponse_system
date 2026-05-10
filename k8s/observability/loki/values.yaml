@@ -1,0 +1,63 @@
+# Loki — агрегация логов для k8s.
+# Режим: SingleBinary (одна Pod для write+read+backend).
+# Для prod использовать SimpleScalable или Distributed режим.
+# Хранение: filesystem (для k3d), для prod — S3/GCS/MinIO.
+
+deploymentMode: SingleBinary
+
+loki:
+  auth_enabled: false   # отключить multi-tenancy (для single-tenant проекта)
+
+  commonConfig:
+    replication_factor: 1
+
+  storage:
+    type: filesystem
+
+  schemaConfig:
+    configs:
+      - from: "2024-01-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+
+  limits_config:
+    # Максимальный размер одной записи лога (важно для Java stack traces)
+    max_line_size: 256KB
+    retention_period: 168h    # 7 дней
+
+singleBinary:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  persistence:
+    enabled: false            # для k3d
+
+# Отключить компоненты distributed режима
+backend:
+  replicas: 0
+read:
+  replicas: 0
+write:
+  replicas: 0
+
+# Кеш — отключить для экономии памяти на k3d
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+
+# Gateway (nginx proxy) не нужен для одной ноды
+gateway:
+  enabled: false
+
+# Отключить отправку статистики в grafana.com
+reportingEnabled: false

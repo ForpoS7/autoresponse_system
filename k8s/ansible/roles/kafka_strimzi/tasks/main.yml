@@ -1,0 +1,97 @@
+---
+# Задача 1: Убедиться что неймспейс существует
+- name: Create kafka namespace
+  kubernetes.core.k8s:
+    api_version: v1
+    kind: Namespace
+    name: "{{ strimzi_namespace }}"
+    state: present
+
+# Задача 2: Добавить Helm репозиторий Strimzi
+- name: Add Strimzi Helm repo
+  kubernetes.core.helm_repository:
+    name: strimzi
+    repo_url: https://strimzi.io/charts/
+
+# Задача 3: Установить / обновить оператор Strimzi
+# Оператор следит за Kafka CRD-объектами и управляет StatefulSet-ами
+- name: Install Strimzi operator
+  kubernetes.core.helm:
+    name: strimzi-kafka-operator
+    chart_ref: strimzi/strimzi-kafka-operator
+    chart_version: "{{ strimzi_chart_version }}"
+    release_namespace: "{{ strimzi_namespace }}"
+    create_namespace: true
+    wait: true
+    wait_condition:
+      type: Available
+      status: "True"
+    values:
+      watchNamespaces:
+        - "{{ strimzi_namespace }}"
+      resources:
+        limits:
+          memory: 384Mi
+          cpu: 500m
+        requests:
+          memory: 192Mi
+          cpu: 100m
+
+# Задача 4: Ждать пока оператор готов принимать CRD
+- name: Wait for Strimzi operator to be ready
+  kubernetes.core.k8s_info:
+    kind: Deployment
+    namespace: "{{ strimzi_namespace }}"
+    name: strimzi-cluster-operator
+    wait: true
+    wait_condition:
+      type: Available
+      status: "True"
+    wait_timeout: "{{ operator_ready_timeout }}"
+
+# Задача 5: Создать Kafka кластер (Custom Resource)
+# Strimzi оператор увидит этот объект и создаст StatefulSet + Services
+- name: Deploy Kafka cluster CR
+  kubernetes.core.k8s:
+    state: present
+    template: kafka_cluster.yaml.j2
+
+# Задача 6: Ждать пока Kafka кластер полностью готов
+# Strimzi выставляет статус Ready=True когда все брокеры запущены
+- name: Wait for Kafka cluster to be Ready
+  kubernetes.core.k8s_info:
+    api_version: kafka.strimzi.io/v1beta2
+    kind: Kafka
+    namespace: "{{ strimzi_namespace }}"
+    name: "{{ kafka_cluster_name }}"
+    wait: true
+    wait_condition:
+      type: Ready
+      status: "True"
+    wait_timeout: "{{ kafka_ready_timeout }}"
+
+# Задача 7: Создать KafkaTopic объекты для каждого топика
+# Entity Operator (входит в Strimzi) видит KafkaTopic CR и создаёт топики в Kafka
+- name: Create Kafka topics
+  kubernetes.core.k8s:
+    state: present
+    template: kafka_topic.yaml.j2
+  loop: "{{ kafka_topics }}"
+  loop_control:
+    loop_var: topic
+    label: "{{ topic.name }}"
+
+# Задача 8: Вывести адрес bootstrap сервиса (для конфигурации других сервисов)
+- name: Get Kafka bootstrap service info
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Service
+    namespace: "{{ strimzi_namespace }}"
+    name: "{{ kafka_cluster_name }}-kafka-bootstrap"
+  register: kafka_svc
+
+- name: Show Kafka bootstrap address
+  ansible.builtin.debug:
+    msg: >
+      Kafka bootstrap:
+      {{ kafka_cluster_name }}-kafka-bootstrap.{{ strimzi_namespace }}.svc.cluster.local:9092

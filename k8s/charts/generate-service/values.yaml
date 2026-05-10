@@ -1,0 +1,41 @@
+replicaCount: 1
+
+image:
+  repository: localhost:30050/generate-service
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+# generate-service — Kafka consumer, нет HTTP эндпоинта
+service:
+  enabled: false
+
+externalSecrets:
+  kafka: kafka-config
+
+config:
+  logLevel: INFO
+
+  kafka:
+    inputTopic:  "vacancy_input"
+    outputTopic: "vacancy_output"
+    groupId:     "generate-consumer"
+    autoOffsetReset: "earliest"
+
+  ollama:
+    url: "http://ollama.autoresponse.svc.cluster.local:11434"
+    model: "qwen2.5:7b"
+    timeout: "120"
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+hpa:
+  enabled: false  # масштабировать по Kafka lag (KEDA), не по CPU
+
+podAnnotations:
+  prometheus.io/scrape: "false"

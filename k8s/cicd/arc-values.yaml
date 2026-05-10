@@ -1,0 +1,42 @@
+# Actions Runner Controller (ARC) — GitHub Actions Self-Hosted Runner в k8s.
+# Chart: oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
+#
+# Предварительно нужно:
+#   1. Создать GitHub App или PAT с правами на repo
+#   2. kubectl create secret generic arc-github-secret \
+#        --from-literal=github_token=<YOUR_PAT> \
+#        -n arc-runners
+
+githubConfigUrl: "https://github.com/OWNER/autoresponse_system"  # ← заменить
+
+githubConfigSecret: arc-github-secret
+
+minRunners: 1
+maxRunners: 5
+
+# Каждый job запускается в отдельном Pod (k8s mode)
+containerMode:
+  type: kubernetes
+  kubernetesModeWorkVolumeClaim:
+    accessModes: ["ReadWriteOnce"]
+    storageClassName: "standard"
+    resources:
+      requests:
+        storage: 1Gi
+
+template:
+  spec:
+    containers:
+      - name: runner
+        image: ghcr.io/actions/actions-runner:latest
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 2000m
+            memory: 2Gi
+        env:
+          # OTel endpoint для трассировки CI задач (опционально)
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: "http://otel-collector.monitoring.svc.cluster.local:4317"

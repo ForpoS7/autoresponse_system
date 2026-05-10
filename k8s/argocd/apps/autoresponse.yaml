@@ -1,0 +1,32 @@
+# Sub-app: основные сервисы проекта.
+# Указывает на директорию с Kubernetes манифестами (Deployment, Service, etc.)
+# для auth_service, hh_autoapply_service, hh_aggregate_service, generate_service.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: autoresponse
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: REPO_URL   # ← заменить на git remote get-url origin
+    targetRevision: HEAD
+    path: k8s/manifests/autoresponse   # манифесты Deployment/Service сервисов
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: autoresponse
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+  # Игнорировать поле replicas — им управляет HPA
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas

@@ -1,0 +1,172 @@
+name: Build → Registry → Helm → ArgoCD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "auth_service/**"
+      - "hh_autoapply_service/**"
+      - "hh_aggregate_service/**"
+      - "generate_service/**"
+
+env:
+  REGISTRY: localhost:30050   # NodePort локального registry (k8s/cicd/registry-values.yaml)
+  ARGOCD_SERVER: localhost:8090  # port-forward argocd-server
+
+# ─── матрица сервисов ───────────────────────────────────────────────────────
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      auth:       ${{ steps.filter.outputs.auth }}
+      autoapply:  ${{ steps.filter.outputs.autoapply }}
+      aggregate:  ${{ steps.filter.outputs.aggregate }}
+      generate:   ${{ steps.filter.outputs.generate }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            auth:
+              - "auth_service/**"
+            autoapply:
+              - "hh_autoapply_service/**"
+            aggregate:
+              - "hh_aggregate_service/**"
+            generate:
+              - "generate_service/**"
+
+  # ─── Build + Push: auth-service ──────────────────────────────────────────
+  build-auth:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.auth == 'true'
+    runs-on: self-hosted          # ARC runner в k8s
+    steps:
+      - uses: actions/checkout@v4
+
+      # Kaniko — собирает Docker образ БЕЗ Docker daemon (безопасно в k8s)
+      - name: Build and push with Kaniko
+        uses: int128/kaniko-action@v1
+        with:
+          context: auth_service
+          dockerfile: auth_service/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/auth-service:${{ github.sha }}
+          kaniko-args: --insecure --insecure-registry=${{ env.REGISTRY }}
+          cache: true
+          cache-repository: ${{ env.REGISTRY }}/cache/auth-service
+
+      # Обновить image.tag в Helm chart → ArgoCD заметит изменение в git
+      - name: Update Helm chart image tag
+        run: |
+          sed -i 's|tag:.*|tag: "${{ github.sha }}"|' k8s/charts/auth-service/values.yaml
+          git config user.email "ci@autoresponse.local"
+          git config user.name "CI Bot"
+          git add k8s/charts/auth-service/values.yaml
+          git diff --cached --quiet || git commit -m "ci: auth-service → ${{ github.sha }}"
+          git push
+
+  # ─── Build + Push: autoapply-service ─────────────────────────────────────
+  build-autoapply:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.autoapply == 'true'
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and push with Kaniko
+        uses: int128/kaniko-action@v1
+        with:
+          context: hh_autoapply_service
+          dockerfile: hh_autoapply_service/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/autoapply-service:${{ github.sha }}
+          kaniko-args: --insecure --insecure-registry=${{ env.REGISTRY }}
+          cache: true
+          cache-repository: ${{ env.REGISTRY }}/cache/autoapply-service
+      - name: Update Helm chart image tag
+        run: |
+          sed -i 's|tag:.*|tag: "${{ github.sha }}"|' k8s/charts/autoapply-service/values.yaml
+          git config user.email "ci@autoresponse.local"
+          git config user.name "CI Bot"
+          git add k8s/charts/autoapply-service/values.yaml
+          git diff --cached --quiet || git commit -m "ci: autoapply-service → ${{ github.sha }}"
+          git push
+
+  # ─── Build + Push: aggregate-service ─────────────────────────────────────
+  build-aggregate:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.aggregate == 'true'
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and push with Kaniko
+        uses: int128/kaniko-action@v1
+        with:
+          context: hh_aggregate_service
+          dockerfile: hh_aggregate_service/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/aggregate-service:${{ github.sha }}
+          kaniko-args: --insecure --insecure-registry=${{ env.REGISTRY }}
+          cache: true
+          cache-repository: ${{ env.REGISTRY }}/cache/aggregate-service
+      - name: Update Helm chart image tag
+        run: |
+          sed -i 's|tag:.*|tag: "${{ github.sha }}"|' k8s/charts/aggregate-service/values.yaml
+          git config user.email "ci@autoresponse.local"
+          git config user.name "CI Bot"
+          git add k8s/charts/aggregate-service/values.yaml
+          git diff --cached --quiet || git commit -m "ci: aggregate-service → ${{ github.sha }}"
+          git push
+
+  # ─── Build + Push: generate-service ──────────────────────────────────────
+  build-generate:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.generate == 'true'
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and push with Kaniko
+        uses: int128/kaniko-action@v1
+        with:
+          context: generate_service
+          dockerfile: generate_service/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/generate-service:${{ github.sha }}
+          kaniko-args: --insecure --insecure-registry=${{ env.REGISTRY }}
+          cache: true
+          cache-repository: ${{ env.REGISTRY }}/cache/generate-service
+      - name: Update Helm chart image tag
+        run: |
+          sed -i 's|tag:.*|tag: "${{ github.sha }}"|' k8s/charts/generate-service/values.yaml
+          git config user.email "ci@autoresponse.local"
+          git config user.name "CI Bot"
+          git add k8s/charts/generate-service/values.yaml
+          git diff --cached --quiet || git commit -m "ci: generate-service → ${{ github.sha }}"
+          git push
+
+  # ─── ArgoCD Sync (после всех build-задач) ────────────────────────────────
+  argocd-sync:
+    runs-on: self-hosted
+    needs: [build-auth, build-autoapply, build-aggregate, build-generate]
+    if: |
+      always() &&
+      (needs.build-auth.result == 'success' ||
+       needs.build-autoapply.result == 'success' ||
+       needs.build-aggregate.result == 'success' ||
+       needs.build-generate.result == 'success')
+    steps:
+      - name: ArgoCD sync autoresponse app
+        env:
+          ARGOCD_AUTH_TOKEN: ${{ secrets.ARGOCD_TOKEN }}
+        run: |
+          argocd app sync autoresponse \
+            --server ${{ env.ARGOCD_SERVER }} \
+            --auth-token $ARGOCD_AUTH_TOKEN \
+            --insecure \
+            --timeout 120
+          argocd app wait autoresponse \
+            --server ${{ env.ARGOCD_SERVER }} \
+            --auth-token $ARGOCD_AUTH_TOKEN \
+            --insecure \
+            --timeout 300

@@ -1,0 +1,61 @@
+# ArgoCD Helm values для локального k3d-кластера
+
+global:
+  image:
+    tag: ""  # берёт версию из chart appVersion
+
+configs:
+  params:
+    # Отключить TLS на сервере — доступ через port-forward, TLS не нужен
+    server.insecure: "true"
+  cm:
+    # Разрешить деплой приложений в любой namespace кластера
+    application.resourceTrackingMethod: annotation
+
+server:
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+repoServer:
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+applicationSet:
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+controller:
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+redis:
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+notifications:
+  enabled: false

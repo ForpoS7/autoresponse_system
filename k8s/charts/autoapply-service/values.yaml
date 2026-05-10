@@ -1,0 +1,71 @@
+replicaCount: 1
+
+image:
+  repository: localhost:30050/autoapply-service
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+service:
+  type: ClusterIP
+  port: 8081
+
+externalSecrets:
+  postgres: postgres-credentials
+  jwt:      jwt-signing-key
+  kafka:    kafka-config
+
+config:
+  serverPort: "8081"
+  logLevel: info
+
+  # Redis/Valkey — кеш HH-токенов и статусов откликов
+  redis:
+    addr: "valkey-primary.ratelimit.svc.cluster.local:6379"
+    db: "0"
+    ttlToken: "86400"    # 24h — TTL HH storageState
+    ttlApply: "3600"     # 1h — TTL статуса автоотклика
+
+  # Kafka топики
+  kafka:
+    topicParseRequested: "parse.requested"
+    topicVacanciesParsed: "vacancies.parsed"
+    topicTokenUpdated:   "token.updated"
+    topicVacancyInput:   "vacancy_input"
+    topicVacancyOutput:  "vacancy_output"
+    groupId:             "autoapply-consumer"
+    autoOffsetReset:     "earliest"
+
+  # MinIO для архивации
+  minio:
+    endpoint: "minio.autoresponse.svc.cluster.local:9000"
+    bucket: "cold"
+
+probes:
+  liveness:
+    path: /health
+    initialDelaySeconds: 15
+    periodSeconds: 10
+  readiness:
+    path: /health
+    initialDelaySeconds: 15
+    periodSeconds: 5
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi    # Playwright требует памяти
+
+hpa:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+podAnnotations:
+  instrumentation.opentelemetry.io/inject-go: "true"
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8081"
+  prometheus.io/path: "/metrics"

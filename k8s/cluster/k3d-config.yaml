@@ -1,0 +1,30 @@
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: autoresponse
+servers: 1
+agents: 2
+kubeAPI:
+  hostPort: "6443"
+options:
+  k3s:
+    extraArgs:
+      # Disable flannel so Cilium can take over as CNI
+      - arg: --flannel-backend=none
+        nodeFilters:
+          - server:*
+      # Cilium provides its own eBPF-based network policy
+      - arg: --disable-network-policy
+        nodeFilters:
+          - server:*
+      # Disable traefik — use ingress-nginx or nothing in edu project
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:*
+      # Disable built-in metrics-server; will install separately with --kubelet-insecure-tls
+      - arg: --disable=metrics-server
+        nodeFilters:
+          - server:*
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: true

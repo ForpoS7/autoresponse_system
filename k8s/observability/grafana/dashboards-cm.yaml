@@ -1,0 +1,22 @@
+---
+# ConfigMap с кастомными дашбордами для Grafana.
+# Grafana Helm chart монтирует его через dashboardsConfigMaps в values.yaml.
+# При изменении JSON — kubectl rollout restart deployment/grafana -n monitoring
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-autoresponse
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"   # автодискавери через Grafana sidecar (если включён)
+data:
+  kafka-lag.json: |
+    # Содержимое генерируется из k8s/observability/grafana/dashboards/kafka-lag.json
+    # Применить: kubectl create configmap grafana-dashboards-autoresponse \
+    #   --from-file=kafka-lag.json=k8s/observability/grafana/dashboards/kafka-lag.json \
+    #   --from-file=platform-validation.json=k8s/observability/grafana/dashboards/platform-validation.json \
+    #   -n monitoring --dry-run=client -o yaml | kubectl apply -f -
+    {}
+  platform-validation.json: |
+    {}

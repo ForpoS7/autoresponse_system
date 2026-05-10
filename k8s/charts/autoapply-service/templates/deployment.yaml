@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "app.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "app.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: autoapply-service
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          envFrom:
+            {{- range $key, $secret := .Values.externalSecrets }}
+            - secretRef:
+                name: {{ $secret }}
+            {{- end }}
+          env:
+            - name: SERVER_PORT
+              value: {{ .Values.config.serverPort | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.config.logLevel | quote }}
+            # Redis / Valkey
+            - name: REDIS_ADDR
+              value: {{ .Values.config.redis.addr | quote }}
+            - name: REDIS_DB
+              value: {{ .Values.config.redis.db | quote }}
+            - name: REDIS_TTL_TOKEN
+              value: {{ .Values.config.redis.ttlToken | quote }}
+            - name: REDIS_TTL_APPLY
+              value: {{ .Values.config.redis.ttlApply | quote }}
+            # Kafka topics
+            - name: KAFKA_TOPIC_PARSE_REQUESTED
+              value: {{ .Values.config.kafka.topicParseRequested | quote }}
+            - name: KAFKA_TOPIC_VACANCIES_PARSED
+              value: {{ .Values.config.kafka.topicVacanciesParsed | quote }}
+            - name: KAFKA_TOPIC_TOKEN_UPDATED
+              value: {{ .Values.config.kafka.topicTokenUpdated | quote }}
+            - name: KAFKA_TOPIC_VACANCY_INPUT
+              value: {{ .Values.config.kafka.topicVacancyInput | quote }}
+            - name: KAFKA_TOPIC_VACANCY_OUTPUT
+              value: {{ .Values.config.kafka.topicVacancyOutput | quote }}
+            - name: KAFKA_GROUP_ID
+              value: {{ .Values.config.kafka.groupId | quote }}
+            - name: KAFKA_AUTO_OFFSET_RESET
+              value: {{ .Values.config.kafka.autoOffsetReset | quote }}
+            # MinIO cold storage
+            - name: MINIO_ENDPOINT
+              value: {{ .Values.config.minio.endpoint | quote }}
+            - name: MINIO_BUCKET
+              value: {{ .Values.config.minio.bucket | quote }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

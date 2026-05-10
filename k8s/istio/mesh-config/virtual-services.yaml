@@ -1,0 +1,78 @@
+# VirtualService — retry-политики и timeout-ы на уровне HTTP-маршрута.
+# Работают поверх DestinationRule: сначала retry, потом circuit breaker.
+#
+# retryOn values:
+#   gateway-error      — 502, 503, 504
+#   connect-failure    — upstream не принял соединение
+#   reset              — upstream закрыл соединение без ответа
+#   retriable-4xx      — 409 Conflict (идемпотентные операции)
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: auth-service
+  namespace: autoresponse
+spec:
+  hosts:
+    - auth-service
+  http:
+    - timeout: 10s
+      retries:
+        attempts: 3
+        perTryTimeout: 3s
+        retryOn: gateway-error,connect-failure,reset
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: autoapply-service
+  namespace: autoresponse
+spec:
+  hosts:
+    - autoapply-service
+  http:
+    - timeout: 30s
+      retries:
+        attempts: 3
+        perTryTimeout: 10s
+        retryOn: gateway-error,connect-failure,reset
+      # Fault injection для тестирования circuit breaker (раскомментировать):
+      # fault:
+      #   delay:
+      #     percentage:
+      #       value: 20.0
+      #     fixedDelay: 5s
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: aggregate-service
+  namespace: autoresponse
+spec:
+  hosts:
+    - aggregate-service
+  http:
+    - timeout: 60s
+      retries:
+        attempts: 2
+        perTryTimeout: 25s
+        retryOn: gateway-error,connect-failure,reset
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: generate-service
+  namespace: autoresponse
+spec:
+  hosts:
+    - generate-service
+  http:
+    - timeout: 120s           # Ollama LLM генерация может занять до 2 минут
+      retries:
+        attempts: 1           # не ретраить LLM — дорого и небезопасно
+        perTryTimeout: 115s
+        retryOn: connect-failure,reset

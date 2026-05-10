@@ -1,0 +1,29 @@
+# Корневое приложение (App of Apps).
+# Применяется ОДИН РАЗ вручную после установки ArgoCD.
+# Дальше ArgoCD сам следит за k8s/argocd/apps/ в git и деплоит всё что там появляется.
+#
+# Заменить REPO_URL на вывод: git remote get-url origin
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: app-of-apps
+  namespace: argocd
+  # Финализатор удаляет все дочерние приложения при удалении этого ресурса
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: REPO_URL   # ← заменить: git remote get-url origin
+    targetRevision: HEAD
+    path: k8s/argocd/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true       # удалять ресурсы которых нет в git
+      selfHeal: true    # откатывать ручные изменения в кластере
+    syncOptions:
+      - CreateNamespace=true

@@ -1,0 +1,84 @@
+---
+# Strimzi Kafka Custom Resource.
+# Оператор читает этот объект и создаёт:
+#   - StatefulSet для Kafka брокеров
+#   - StatefulSet для ZooKeeper
+#   - Services (bootstrap, brokers, zookeeper)
+#   - ConfigMap с конфигурацией
+
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: {{ kafka_cluster_name }}
+  namespace: {{ strimzi_namespace }}
+  labels:
+    app.kubernetes.io/managed-by: ansible
+    environment: "{{ lookup('env', 'ENVIRONMENT') | default('dev') }}"
+spec:
+  kafka:
+    version: "{{ kafka_version }}"
+    replicas: {{ kafka_replicas }}
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+    config:
+      # Для single-node: replication factor = 1
+      offsets.topic.replication.factor: "{{ kafka_replicas }}"
+      transaction.state.log.replication.factor: "{{ kafka_replicas }}"
+      transaction.state.log.min.isr: "{{ kafka_replicas }}"
+      default.replication.factor: "{{ kafka_replicas }}"
+      min.insync.replicas: "{{ kafka_replicas }}"
+      # Не удалять топики автоматически
+      delete.topic.enable: "true"
+      log.retention.hours: "168"
+    storage:
+      # ephemeral — данные не переживают перезапуск пода (ок для dev)
+      # Для prod заменить на: type: persistent-claim + size: 10Gi
+      type: ephemeral
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 200m
+      limits:
+        memory: 1Gi
+        cpu: 500m
+    readinessProbe:
+      initialDelaySeconds: 15
+      timeoutSeconds: 5
+    livenessProbe:
+      initialDelaySeconds: 15
+      timeoutSeconds: 5
+
+  zookeeper:
+    replicas: {{ zookeeper_replicas }}
+    storage:
+      type: ephemeral
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 100m
+      limits:
+        memory: 512Mi
+        cpu: 300m
+
+  entityOperator:
+    # Topic operator: управляет KafkaTopic CR → реальные топики в Kafka
+    topicOperator: {}
+    # User operator: управляет KafkaUser CR → ACL и credentials
+    userOperator: {}
+
+  # Kafka Exporter — exposes consumer group lag as Prometheus metrics.
+  # Creates a separate pod: {cluster}-kafka-exporter, port 9404.
+  # Scrape target для VictoriaMetrics: kafka-autoresponse-kafka-exporter.kafka.svc:9404
+  kafkaExporter:
+    topicRegex: ".*"
+    groupRegex: ".*"
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi

@@ -1,0 +1,23 @@
+---
+# KafkaTopic Custom Resource.
+# Entity Operator (часть Strimzi) следит за этими объектами
+# и создаёт/обновляет соответствующие топики в Kafka.
+
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: {{ topic.name | replace('.', '-') }}
+  namespace: {{ strimzi_namespace }}
+  labels:
+    strimzi.io/cluster: {{ kafka_cluster_name }}
+    app.kubernetes.io/managed-by: ansible
+spec:
+  # Имя топика в Kafka (может содержать точки, в отличие от имени CR)
+  topicName: {{ topic.name }}
+  partitions: {{ topic.partitions }}
+  replicas: {{ topic.replicas }}
+  config:
+    # Сколько хранить сообщения (7 дней)
+    retention.ms: "604800000"
+    # Максимальный размер топика на диске (1 ГБ на партицию)
+    retention.bytes: "1073741824"

@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "app.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "app.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: aggregate-service
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          envFrom:
+            {{- range $key, $secret := .Values.externalSecrets }}
+            - secretRef:
+                name: {{ $secret }}
+            {{- end }}
+          env:
+            - name: SERVER_PORT
+              value: {{ .Values.config.serverPort | quote }}
+            - name: LOGGING_LEVEL_ROOT
+              value: {{ .Values.config.logLevel | quote }}
+            # JVM tuning — picked up by the JVM before Spring starts
+            - name: JAVA_TOOL_OPTIONS
+              value: {{ .Values.config.javaOpts | quote }}
+            # Spring Boot Actuator base path
+            - name: MANAGEMENT_ENDPOINTS_WEB_BASE_PATH
+              value: {{ .Values.config.actuator.basePath | quote }}
+            # Kafka topic names (Spring @Value injection)
+            - name: KAFKA_TOPIC_VACANCIES_PARSED
+              value: {{ .Values.config.kafka.topicVacanciesParsed | quote }}
+            - name: KAFKA_TOPIC_PARSE_REQUESTED
+              value: {{ .Values.config.kafka.topicParseRequested | quote }}
+            - name: KAFKA_TOPIC_TOKEN_UPDATED
+              value: {{ .Values.config.kafka.topicTokenUpdated | quote }}
+            - name: KAFKA_GROUP_ID
+              value: {{ .Values.config.kafka.groupId | quote }}
+            - name: KAFKA_AUTO_OFFSET_RESET
+              value: {{ .Values.config.kafka.autoOffsetReset | quote }}
+            # Vacancy scheduler (disabled by default, enable in prod)
+            - name: SCHEDULER_ENABLED
+              value: {{ .Values.config.scheduler.enabled | quote }}
+            - name: SCHEDULER_CRON
+              value: {{ .Values.config.scheduler.cronExpression | quote }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold | default 3 }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

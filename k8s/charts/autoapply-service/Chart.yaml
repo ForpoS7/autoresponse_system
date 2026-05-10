@@ -1,0 +1,6 @@
+apiVersion: v2
+name: autoapply-service
+description: Go HH.ru auto-apply service — Playwright, Kafka, Redis
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

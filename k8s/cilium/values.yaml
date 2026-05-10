@@ -1,0 +1,41 @@
+# Cilium CNI — tuned for k3d (nodes are Docker containers, not VMs)
+# k8sServiceHost and k8sServicePort are injected at install time by setup.ps1
+
+operator:
+  replicas: 1  # single control-plane node in this cluster
+
+ipam:
+  mode: kubernetes
+
+# Docker already handles MASQUERADE; eBPF masquerade needs kernel headers
+# that are absent inside Docker containers on Windows/WSL2
+bpf:
+  masquerade: false
+
+# k3s ships with kube-proxy, so we keep it running alongside Cilium.
+# Full kube-proxy replacement requires native eBPF — fine for bare-metal Linux,
+# but breaks on Docker-in-Windows where the host kernel BPF helpers may be limited.
+kubeProxyReplacement: false
+
+# Enforce NetworkPolicy objects created in the cluster
+policyEnforcementMode: default
+
+# Hubble — eBPF-based observability (flow logs, DNS, drop reasons)
+hubble:
+  enabled: true
+  relay:
+    enabled: true
+    replicas: 1
+  ui:
+    enabled: true
+    replicas: 1
+  metrics:
+    enabled:
+      - dns
+      - drop
+      - tcp
+      - flow
+      - icmp
+
+image:
+  pullPolicy: IfNotPresent

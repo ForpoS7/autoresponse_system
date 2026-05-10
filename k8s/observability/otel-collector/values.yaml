@@ -1,0 +1,134 @@
+# OpenTelemetry Collector — универсальный агент сбора телеметрии.
+# Принцип: receivers → processors → exporters.
+# Разворачивается как Deployment (централизованный gateway).
+#
+# Поток данных:
+#   Сервисы (OTLP) ──→ OTel Collector ──→ Метрики → VictoriaMetrics
+#                                       ──→ Логи    → Loki
+#                                       ──→ Трейсы  → Tempo
+
+mode: deployment
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+config:
+  # ── Receivers: откуда принимаем данные ─────────────────────────────────────
+  receivers:
+    # OTLP — стандарт OpenTelemetry (все три сигнала: метрики/логи/трейсы)
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+    # Prometheus — scrape метрик (как fallback если сервисы не умеют OTLP)
+    prometheus:
+      config:
+        scrape_configs:
+          - job_name: otel-collector-self
+            static_configs:
+              - targets: ["0.0.0.0:8888"]
+
+  # ── Processors: обработка перед отправкой ──────────────────────────────────
+  processors:
+    # Защита от OOM: если память > 80% — дропаем данные вместо краша
+    memory_limiter:
+      check_interval: 5s
+      limit_percentage: 80
+      spike_limit_percentage: 25
+
+    # Батчинг: отправлять не каждый span/метрику отдельно
+    batch:
+      timeout: 10s
+      send_batch_size: 512
+
+    # Обогащение атрибутами k8s: pod_name, namespace, deployment
+    k8sattributes:
+      auth_type: serviceAccount
+      passthrough: false
+      extract:
+        metadata:
+          - k8s.pod.name
+          - k8s.pod.uid
+          - k8s.namespace.name
+          - k8s.deployment.name
+          - k8s.node.name
+        labels:
+          - tag_name: app
+            key: app
+            from: pod
+
+    # Добавить resource атрибуты сервиса
+    resource:
+      attributes:
+        - key: service.cluster
+          value: k3d-autoresponse
+          action: upsert
+
+  # ── Exporters: куда отправляем ─────────────────────────────────────────────
+  exporters:
+    # Метрики → VictoriaMetrics (Prometheus remote_write протокол)
+    prometheusremotewrite:
+      endpoint: http://victoria-metrics-single-server.monitoring.svc.cluster.local:8428/api/v1/write
+      tls:
+        insecure: true
+
+    # Логи → Loki
+    loki:
+      endpoint: http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
+      default_labels_enabled:
+        exporter: false
+        job: true
+
+    # Трейсы → Tempo (OTLP gRPC)
+    otlp/tempo:
+      endpoint: http://tempo.monitoring.svc.cluster.local:4317
+      tls:
+        insecure: true
+
+    # Debug: выводить в stdout (убрать в prod)
+    debug:
+      verbosity: basic
+      sampling_initial: 5
+      sampling_thereafter: 200
+
+  # ── Service: собрать пайплайны ─────────────────────────────────────────────
+  service:
+    pipelines:
+      metrics:
+        receivers:  [otlp, prometheus]
+        processors: [memory_limiter, batch, k8sattributes, resource]
+        exporters:  [prometheusremotewrite]
+
+      logs:
+        receivers:  [otlp]
+        processors: [memory_limiter, batch, k8sattributes, resource]
+        exporters:  [loki]
+
+      traces:
+        receivers:  [otlp]
+        processors: [memory_limiter, batch, k8sattributes, resource]
+        exporters:  [otlp/tempo]
+
+# RBAC для k8sattributes processor
+clusterRole:
+  create: true
+  rules:
+    - apiGroups: [""]
+      resources: ["pods", "namespaces", "nodes"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["apps"]
+      resources: ["replicasets"]
+      verbs: ["get", "list", "watch"]
+
+serviceAccount:
+  create: true

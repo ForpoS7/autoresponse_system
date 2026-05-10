@@ -1,0 +1,122 @@
+# Уровень 1: Istio Gateway — объявляет порт на IngressGateway Pod-е
+# Уровень 2: VirtualService — маршрутизация по URL-пути к сервисам
+# Уровень 3: Kubernetes Ingress (для HAProxy) — альтернативный маршрутизатор
+#
+# Используй Istio Gateway+VS если Istio установлен,
+# или Kubernetes Ingress если только HAProxy.
+
+---
+# ── Istio Gateway ────────────────────────────────────────────────────────────
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: autoresponse-gateway
+  namespace: autoresponse
+spec:
+  selector:
+    istio: ingress          # Выбирает istio-ingressgateway Pod
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "*"
+
+---
+# ── Istio VirtualService: внешний трафик → внутренние сервисы ────────────────
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: autoresponse-gateway-routes
+  namespace: autoresponse
+spec:
+  hosts:
+    - "*"
+  gateways:
+    - autoresponse-gateway
+  http:
+    - name: auth-routes
+      match:
+        - uri:
+            prefix: /auth
+      route:
+        - destination:
+            host: auth-service
+            port:
+              number: 8082
+      timeout: 10s
+      retries:
+        attempts: 3
+        perTryTimeout: 3s
+        retryOn: gateway-error,connect-failure,reset
+
+    - name: autoapply-routes
+      match:
+        - uri:
+            prefix: /api/autoapply
+      route:
+        - destination:
+            host: autoapply-service
+            port:
+              number: 8081
+      timeout: 30s
+
+    - name: aggregate-routes
+      match:
+        - uri:
+            prefix: /api/vacancies
+        - uri:
+            prefix: /api/hh-token
+        - uri:
+            prefix: /api/scheduler
+        - uri:
+            prefix: /api/archive
+      route:
+        - destination:
+            host: aggregate-service
+            port:
+              number: 8080
+      timeout: 60s
+
+---
+# ── Kubernetes Ingress (HAProxy) ─────────────────────────────────────────────
+# Используется если трафик идёт через HAProxy, а не через Istio IngressGateway.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: autoresponse-haproxy
+  namespace: autoresponse
+  annotations:
+    kubernetes.io/ingress.class: haproxy
+    haproxy.org/load-balance:    leastconn
+    haproxy.org/timeout-connect: "5s"
+    haproxy.org/timeout-server:  "30s"
+    haproxy.org/timeout-client:  "30s"
+    # Retry при ошибках сервера
+    haproxy.org/retry-on:        "502,503,504"
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /auth
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-service
+                port:
+                  number: 8082
+          - path: /api/autoapply
+            pathType: Prefix
+            backend:
+              service:
+                name: autoapply-service
+                port:
+                  number: 8081
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: aggregate-service
+                port:
+                  number: 8080

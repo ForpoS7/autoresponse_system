@@ -1,0 +1,41 @@
+# ConfigMap с правилами rate limiting для Envoy Rate Limit Service.
+#
+# Домен (domain) — пространство имён правил. Должен совпадать с EnvoyFilter.
+# Дескрипторы (descriptors) — условия. Проверяются по цепочке.
+#
+# Правила соответствуют nginx.conf из исходного проекта:
+#   /auth/*  → 5 req/min   (защита от брутфорса)
+#   /api/*   → 60 req/min
+#   глобально → 120 req/min per IP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ratelimit-config
+  namespace: ratelimit
+  labels:
+    app: ratelimit
+data:
+  config.yaml: |
+    domain: autoresponse-ratelimit
+    descriptors:
+
+      # /auth/* — жёсткий лимит для защиты от брутфорса паролей
+      - key: header_match
+        value: is_auth_path
+        rate_limit:
+          unit: MINUTE
+          requests_per_unit: 5
+
+      # /api/* — стандартный лимит для API
+      - key: header_match
+        value: is_api_path
+        rate_limit:
+          unit: MINUTE
+          requests_per_unit: 60
+
+      # Глобальный лимит per-IP (второй слой защиты)
+      - key: remote_address
+        rate_limit:
+          unit: MINUTE
+          requests_per_unit: 120

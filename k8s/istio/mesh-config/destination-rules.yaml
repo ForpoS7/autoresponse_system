@@ -1,0 +1,109 @@
+# DestinationRule — политики трафика на уровне сервиса:
+#   outlierDetection → Circuit Breaker (автоматическое исключение нездоровых инстансов)
+#   connectionPool   → ограничения пула соединений (защита от thundering herd)
+#   tls              → ISTIO_MUTUAL = mTLS через Envoy sidecar
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: auth-service
+  namespace: autoresponse
+spec:
+  host: auth-service
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 1000
+    outlierDetection:
+      consecutiveGatewayErrors: 5    # 5 ошибок подряд → эжекция
+      interval: 30s                   # окно оценки
+      baseEjectionTime: 30s           # минимальное время исключения (x2 при повторах)
+      maxEjectionPercent: 50          # не более 50% хостов может быть исключено
+    loadBalancer:
+      simple: LEAST_CONN
+  tls:
+    mode: ISTIO_MUTUAL
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: autoapply-service
+  namespace: autoresponse
+spec:
+  host: autoapply-service
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 200
+      http:
+        http1MaxPendingRequests: 100
+        http2MaxRequests: 2000
+        # Playwright сессии долгие — не пересоздавать соединение после каждого запроса
+        maxRequestsPerConnection: 10
+    outlierDetection:
+      consecutiveGatewayErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 0             # разрешить эжекцию даже если все хосты нездоровы
+    loadBalancer:
+      simple: LEAST_CONN
+  tls:
+    mode: ISTIO_MUTUAL
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: aggregate-service
+  namespace: autoresponse
+spec:
+  host: aggregate-service
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 1000
+        idleTimeout: 60s              # Spring Boot медленнее инициализируется
+    outlierDetection:
+      consecutiveGatewayErrors: 3    # Java сервис — более строгий порог
+      interval: 30s
+      baseEjectionTime: 60s
+      maxEjectionPercent: 33
+    loadBalancer:
+      simple: ROUND_ROBIN
+  tls:
+    mode: ISTIO_MUTUAL
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: generate-service
+  namespace: autoresponse
+spec:
+  host: generate-service
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 50
+      http:
+        http1MaxPendingRequests: 20
+        http2MaxRequests: 100
+    outlierDetection:
+      # Ollama LLM вызовы медленные — более мягкий circuit breaker
+      consecutiveGatewayErrors: 3
+      interval: 60s
+      baseEjectionTime: 120s
+      maxEjectionPercent: 50
+    loadBalancer:
+      simple: LEAST_CONN
+  tls:
+    mode: ISTIO_MUTUAL

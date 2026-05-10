@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "app.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "app.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            {{- range $key, $secret := .Values.externalSecrets }}
+            - secretRef:
+                name: {{ $secret }}
+            {{- end }}
+          env:
+            - name: LOG_LEVEL
+              value: {{ .Values.config.logLevel | quote }}
+            # Kafka consumer topics
+            - name: KAFKA_INPUT_TOPIC
+              value: {{ .Values.config.kafka.inputTopic | quote }}
+            - name: KAFKA_OUTPUT_TOPIC
+              value: {{ .Values.config.kafka.outputTopic | quote }}
+            - name: KAFKA_GROUP_ID
+              value: {{ .Values.config.kafka.groupId | quote }}
+            - name: KAFKA_AUTO_OFFSET_RESET
+              value: {{ .Values.config.kafka.autoOffsetReset | quote }}
+            # Ollama LLM backend
+            - name: OLLAMA_URL
+              value: {{ .Values.config.ollama.url | quote }}
+            - name: OLLAMA_MODEL
+              value: {{ .Values.config.ollama.model | quote }}
+            - name: OLLAMA_TIMEOUT
+              value: {{ .Values.config.ollama.timeout | quote }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

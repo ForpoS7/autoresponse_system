@@ -1,0 +1,28 @@
+# Valkey — open-source Redis-совместимый форк (BSD лицензия).
+# Используется как хранилище счётчиков для Envoy Rate Limit Service.
+# Один счётчик = один дескриптор (например "ip:1.2.3.4") → значение = кол-во запросов.
+
+architecture: standalone    # для prod: replication
+
+auth:
+  enabled: false            # Rate limit service внутри кластера, mTLS через Istio
+
+primary:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  persistence:
+    enabled: false          # счётчики не нужно персистировать (сбрасываются при рестарте)
+
+service:
+  port: 6379
+
+# Valkey конфиг: маленький maxmemory с LRU eviction
+commonConfiguration: |-
+  maxmemory 64mb
+  maxmemory-policy allkeys-lru
+  save ""

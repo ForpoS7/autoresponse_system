@@ -1,0 +1,70 @@
+replicaCount: 1
+
+image:
+  repository: localhost:30050/aggregate-service
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+service:
+  type: ClusterIP
+  port: 8080
+
+externalSecrets:
+  postgres: postgres-credentials
+  jwt:      jwt-signing-key
+  kafka:    kafka-config
+
+config:
+  serverPort: "8080"
+  logLevel: INFO
+
+  # JVM tuning для Spring Boot в контейнере
+  javaOpts: "-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -Dfile.encoding=UTF-8"
+
+  # Spring Boot Actuator
+  actuator:
+    basePath: "/actuator"
+
+  # Kafka (Spring Kafka property names)
+  kafka:
+    topicVacanciesParsed: "vacancies.parsed"
+    topicParseRequested:  "parse.requested"
+    topicTokenUpdated:    "token.updated"
+    groupId:              "aggregate-consumer"
+    autoOffsetReset:      "earliest"
+
+  # Планировщик парсинга (раскомментировать в prod)
+  scheduler:
+    enabled: "false"
+    cronExpression: "0 0 * * * *"   # каждый час
+
+probes:
+  liveness:
+    path: /actuator/health/liveness
+    initialDelaySeconds: 60          # Spring Boot медленно стартует
+    periodSeconds: 15
+    failureThreshold: 5
+  readiness:
+    path: /actuator/health/readiness
+    initialDelaySeconds: 60
+    periodSeconds: 10
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi    # JVM требует больше памяти
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+hpa:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 75
+
+podAnnotations:
+  instrumentation.opentelemetry.io/inject-java: "true"
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/actuator/prometheus"

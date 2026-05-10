@@ -1,0 +1,59 @@
+# RBAC для Kaniko-джобов: право создавать/читать ConfigMap
+# и доступ к ServiceAccount для push в registry.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cicd
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kaniko
+  namespace: cicd
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kaniko-builder
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kaniko-builder
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kaniko-builder
+subjects:
+  - kind: ServiceAccount
+    name: kaniko
+    namespace: cicd
+---
+# Secret для доступа к локальному registry (без TLS — base64 пустых credentials)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kaniko-registry-secret
+  namespace: cicd
+type: kubernetes.io/dockerconfigjson
+stringData:
+  .dockerconfigjson: |
+    {
+      "auths": {
+        "registry.cicd.svc.cluster.local:5000": {
+          "auth": ""
+        },
+        "localhost:30050": {
+          "auth": ""
+        }
+      },
+      "insecure-registries": ["registry.cicd.svc.cluster.local:5000", "localhost:30050"]
+    }

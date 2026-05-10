@@ -1,0 +1,98 @@
+# VictoriaMetrics Single — drop-in замена Prometheus.
+# Совместима с PromQL, принимает remote_write от любого агента.
+# 5-10x меньше памяти чем Prometheus при той же нагрузке.
+
+server:
+  enabled: true
+
+  retentionPeriod: "30d"
+
+  # Для k3d отключаем persistence (данные в ephemeral storage)
+  # Для prod: enabled: true + size: 10Gi
+  persistentVolume:
+    enabled: false
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # Scrape config — переносим логику из prometheus/prometheus.yml проекта.
+  # В k8s сервисы доступны по FQDN внутри кластера.
+  scrape:
+    enabled: true
+    config:
+      global:
+        scrape_interval: 15s
+        evaluation_interval: 15s
+
+      scrape_configs:
+        # Go autoapply service
+        - job_name: autoapply-service
+          static_configs:
+            - targets:
+                - autoapply-service.autoresponse.svc.cluster.local:8081
+          metrics_path: /metrics
+
+        # Java aggregate service (Spring Boot Actuator)
+        - job_name: aggregate-service
+          static_configs:
+            - targets:
+                - aggregate-service.autoresponse.svc.cluster.local:8080
+          metrics_path: /actuator/prometheus
+
+        # Auth service (Go)
+        - job_name: auth-service
+          static_configs:
+            - targets:
+                - auth-service.autoresponse.svc.cluster.local:8082
+          metrics_path: /metrics
+
+        # Strimzi Kafka Exporter — consumer group lag metrics (kafka_consumergroup_lag)
+        # Pod создаётся автоматически после добавления kafkaExporter: {} в Kafka CR
+        - job_name: kafka-exporter
+          static_configs:
+            - targets:
+                - kafka-autoresponse-kafka-exporter.kafka.svc.cluster.local:9404
+          metrics_path: /metrics
+
+        # Istio control plane (istiod) — pilot metrics, config distribution
+        - job_name: istiod
+          static_configs:
+            - targets:
+                - istiod.istio-system.svc.cluster.local:15014
+          metrics_path: /metrics
+
+        # Envoy Rate Limit service — over_limit counters
+        - job_name: ratelimit
+          static_configs:
+            - targets:
+                - ratelimit.ratelimit.svc.cluster.local:8080
+          metrics_path: /metrics
+
+        # Autodiscovery: любой под с аннотацией prometheus.io/scrape=true
+        - job_name: kubernetes-pods
+          kubernetes_sd_configs:
+            - role: pod
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+              action: keep
+              regex: "true"
+            - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+              action: replace
+              target_label: __metrics_path__
+              regex: (.+)
+            - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+              action: replace
+              regex: ([^:]+)(?::\d+)?;(\d+)
+              replacement: $1:$2
+              target_label: __address__
+            - source_labels: [__meta_kubernetes_namespace]
+              target_label: namespace
+            - source_labels: [__meta_kubernetes_pod_name]
+              target_label: pod
+            - source_labels: [__meta_kubernetes_pod_label_app]
+              target_label: app

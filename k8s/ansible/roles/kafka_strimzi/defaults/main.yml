@@ -1,0 +1,32 @@
+---
+# Strimzi оператор
+strimzi_chart_version: "0.42.0"
+strimzi_namespace: kafka
+
+# Kafka кластер
+kafka_cluster_name: autoresponse-kafka
+kafka_version: "3.7.0"
+kafka_replicas: 1         # для prod: 3
+zookeeper_replicas: 1     # для prod: 3
+
+# Топики — соответствуют топикам из CLAUDE.md / docker-compose проекта
+kafka_topics:
+  - name: vacancies.parsed
+    partitions: 3
+    replicas: 1
+  - name: parse.requested
+    partitions: 1
+    replicas: 1
+  - name: token.updated
+    partitions: 1
+    replicas: 1
+  - name: vacancy_input
+    partitions: 3
+    replicas: 1
+  - name: vacancy_output
+    partitions: 3
+    replicas: 1
+
+# Таймауты ожидания (секунды)
+operator_ready_timeout: 300
+kafka_ready_timeout: 600

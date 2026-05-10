@@ -1,0 +1,67 @@
+---
+# Task 6.2 — Istio Fault Injection для проверки Circuit Breaker
+#
+# Переопределяет VirtualService autoapply-service:
+#   50% запросов → немедленный abort HTTP 503 (до отправки в под)
+#
+# Применить:    kubectl apply -f fault-injection.yaml
+# Убрать:       kubectl delete -f fault-injection.yaml
+#               (вернётся оригинальный VS из mesh-config/virtual-services.yaml)
+
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: autoapply-fault-injection
+  namespace: autoresponse
+  labels:
+    app: autoapply-service
+    test: circuit-breaker
+spec:
+  hosts:
+    - autoapply-service
+  http:
+    - name: fault-50pct
+      fault:
+        abort:
+          # HTTP 503 — именно этот код засчитывается как consecutiveGatewayErrors
+          # в DestinationRule outlierDetection (см. mesh-config/destination-rules.yaml)
+          httpStatus: 503
+          percentage:
+            value: 50.0
+      route:
+        - destination:
+            host: autoapply-service
+            port:
+              number: 8081
+
+---
+# Отдельный VirtualService для aggregate-service (проверить CB на Java-сервисе)
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: aggregate-fault-injection
+  namespace: autoresponse
+  labels:
+    app: aggregate-service
+    test: circuit-breaker
+spec:
+  hosts:
+    - aggregate-service
+  http:
+    - name: fault-delay-and-abort
+      fault:
+        # Задержка 3s на 30% запросов — проверяет timeout retry политику
+        delay:
+          fixedDelay: 3s
+          percentage:
+            value: 30.0
+        # Abort 503 на 20% запросов — активирует outlierDetection быстрее
+        abort:
+          httpStatus: 503
+          percentage:
+            value: 20.0
+      route:
+        - destination:
+            host: aggregate-service
+            port:
+              number: 8080

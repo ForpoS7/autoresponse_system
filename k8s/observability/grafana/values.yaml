@@ -1,0 +1,140 @@
+# Grafana — единый UI для метрик (VictoriaMetrics), логов (Loki), трейсов (Tempo).
+# "Single pane of glass": переходы trace → logs → metrics не выходя из интерфейса.
+
+adminPassword: admin
+
+service:
+  type: ClusterIP
+  port: 80
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+persistence:
+  enabled: false    # для k3d (дашборды провизионируются через ConfigMap)
+
+# ── Datasources ────────────────────────────────────────────────────────────
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+
+      # VictoriaMetrics — основной источник метрик (Prometheus-совместимый)
+      - name: VictoriaMetrics
+        type: prometheus
+        uid: victoriametrics
+        url: http://victoria-metrics-single-server.monitoring.svc.cluster.local:8428
+        isDefault: true
+        jsonData:
+          httpMethod: POST
+          prometheusType: Prometheus    # VM полностью совместима с Prometheus datasource
+
+      # Loki — логи
+      - name: Loki
+        type: loki
+        uid: loki
+        url: http://loki.monitoring.svc.cluster.local:3100
+        jsonData:
+          # Переход из лога → трейс (кликаешь на trace_id → открывается в Tempo)
+          derivedFields:
+            - datasourceUid: tempo
+              matcherRegex: '"trace_id":"(\w+)"'
+              name: TraceID
+              url: '$${__value.raw}'
+              urlDisplayLabel: Открыть трейс в Tempo
+
+      # Tempo — трейсы
+      - name: Tempo
+        type: tempo
+        uid: tempo
+        url: http://tempo.monitoring.svc.cluster.local:3100
+        jsonData:
+          # Переход из трейса → логи (кликаешь на span → открываются логи пода)
+          tracesToLogsV2:
+            datasourceUid: loki
+            filterByTraceID: true
+            filterBySpanID: false
+            customQuery: true
+            query: '{namespace="${__span.tags["k8s.namespace.name"]}"} |= "${__trace.traceId}"'
+          # Переход из трейса → метрики (RED: Rate, Errors, Duration)
+          tracesToMetrics:
+            datasourceUid: victoriametrics
+            queries:
+              - name: "Request rate"
+                query: 'sum(rate(traces_spanmetrics_calls_total{service="$__tags{service.name}"}[5m]))'
+              - name: "Error rate"
+                query: 'sum(rate(traces_spanmetrics_calls_total{service="$__tags{service.name}",status_code="STATUS_CODE_ERROR"}[5m]))'
+          # Граф сервисов (кто вызывает кого)
+          serviceMap:
+            datasourceUid: victoriametrics
+          nodeGraph:
+            enabled: true
+
+# ── Dashboard providers ─────────────────────────────────────────────────────
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: default
+        folder: Autoresponse
+        type: file
+        disableDeletion: false
+        options:
+          path: /var/lib/grafana/dashboards/default
+      - name: kubernetes
+        folder: Kubernetes
+        type: file
+        options:
+          path: /var/lib/grafana/dashboards/kubernetes
+      # Кастомные дашборды из ConfigMap (Task 6.3)
+      - name: custom
+        folder: AutoResponse Platform
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/custom
+
+# ── ConfigMaps с кастомными дашбордами ──────────────────────────────────────
+# Grafana монтирует эти ConfigMaps как volume в /var/lib/grafana/dashboards/custom
+dashboardsConfigMaps:
+  custom: grafana-dashboards-autoresponse
+
+# ── Dashboards (импорт из Grafana.com по ID) ────────────────────────────────
+dashboards:
+  kubernetes:
+    # k8s cluster overview (VictoriaMetrics-совместим)
+    k8s-cluster:
+      gnetId: 6417
+      revision: 1
+      datasource: VictoriaMetrics
+    # Pod ресурсы
+    k8s-pods:
+      gnetId: 6336
+      revision: 1
+      datasource: VictoriaMetrics
+  default:
+    # Loki logs overview
+    loki-logs:
+      gnetId: 13639
+      revision: 2
+      datasource: Loki
+
+# ── Плагины ────────────────────────────────────────────────────────────────
+plugins:
+  - grafana-piechart-panel
+  - grafana-clock-panel
+
+# ── Grafana.ini ────────────────────────────────────────────────────────────
+grafana.ini:
+  feature_toggles:
+    # Корреляция trace ↔ metrics (experimental)
+    enable: traceToMetrics
+  analytics:
+    reporting_enabled: false
+    check_for_updates: false

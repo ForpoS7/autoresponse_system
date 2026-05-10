@@ -1,0 +1,108 @@
+# Keepalived DaemonSet — обеспечивает Virtual IP (VIP) между ingress-нодами.
+#
+# Принцип работы:
+#   - Запускается на каждой ноде с меткой ingress=true
+#   - Ноды через VRRP выбирают MASTER (держит VIP) и BACKUP-ы
+#   - Если MASTER падает → BACKUP перехватывает VIP за <1 секунды
+#   - Внешний трафик всегда идёт на VIP → прозрачный failover
+#
+# Для k3d: добавить метку нодам:
+#   kubectl label nodes k3d-autoresponse-agent-0 ingress=true
+#   kubectl label nodes k3d-autoresponse-agent-1 ingress=true
+#
+# VRRP в Docker работает ограниченно (нет L2-сети между контейнерами).
+# Конфигурация ниже корректна для bare-metal / VM кластеров.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keepalived-config
+  namespace: kube-system
+data:
+  keepalived.conf: |
+    global_defs {
+      router_id k8s_ingress
+      vrrp_skip_check_adv_addr
+      vrrp_strict
+    }
+
+    # Скрипт проверки: HAProxy жив?
+    vrrp_script chk_haproxy {
+      script "/bin/sh -c 'kill -0 $(cat /var/run/haproxy.pid)'"
+      interval 2
+      weight   -20
+      fall     2
+      rise     2
+    }
+
+    vrrp_instance VI_1 {
+      state BACKUP          # Все ноды стартуют как BACKUP; тот у кого выше priority станет MASTER
+      interface eth0        # Сетевой интерфейс ноды (проверить: ip a)
+      virtual_router_id 51  # Должен совпадать на всех нодах одной группы
+      priority 100          # Повысить на "предпочтительном" MASTER (например 110)
+      advert_int 1
+
+      authentication {
+        auth_type PASS
+        auth_pass k8s_vrrp_secret   # Сменить на реальный пароль
+      }
+
+      virtual_ipaddress {
+        192.168.1.200/24    # VIP — назначить свободный IP в сети нод
+      }
+
+      track_script {
+        chk_haproxy
+      }
+    }
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: keepalived
+  namespace: kube-system
+  labels:
+    app: keepalived
+spec:
+  selector:
+    matchLabels:
+      app: keepalived
+  template:
+    metadata:
+      labels:
+        app: keepalived
+    spec:
+      # Только на нодах с меткой ingress=true
+      nodeSelector:
+        ingress: "true"
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+      hostNetwork: true     # VRRP требует доступа к L2-сети хоста
+      priorityClassName: system-node-critical
+      containers:
+        - name: keepalived
+          image: osixia/keepalived:2.0.20
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["NET_ADMIN", "NET_BROADCAST", "NET_RAW"]
+          volumeMounts:
+            - name: config
+              mountPath: /container/service/keepalived/assets/etc/keepalived
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi
+          livenessProbe:
+            exec:
+              command: ["pidof", "keepalived"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: keepalived-config

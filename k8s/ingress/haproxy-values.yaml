@@ -1,0 +1,46 @@
+# HAProxy Kubernetes Ingress Controller (haproxytech/kubernetes-ingress).
+# Стоит перед Istio IngressGateway: Client → HAProxy → Istio Gateway → mesh.
+#
+# HAProxy умеет: ACL-правила, stick-tables (session affinity),
+# health checks, SSL termination, TCP-режим, статистику.
+
+controller:
+  replicaCount: 2          # HA: 2 реплики для отказоустойчивости
+
+  service:
+    type: NodePort         # k3d: нет облачного LoadBalancer
+    nodePorts:
+      http: 31080
+      https: 31443
+      stat: 31024
+
+  # Алгоритм балансировки по умолчанию для всех backend-ов
+  defaultBackendService: ""
+
+  ingressClass: haproxy
+
+  # HAProxy глобальные настройки (передаются через ConfigMap)
+  config:
+    # Алгоритм балансировки: leastconn — меньше соединений получает запрос
+    load-balance: leastconn
+    # Таймауты
+    timeout-connect: "5s"
+    timeout-client:  "30s"
+    timeout-server:  "30s"
+    # Retry при ошибках backend
+    retry-on: "502,503,504"
+    nbthread: "4"
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  # Мониторинг: статистика HAProxy доступна на /haproxy_stats
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port:   "1024"
+    prometheus.io/path:   "/metrics"

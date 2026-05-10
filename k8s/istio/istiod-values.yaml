@@ -1,0 +1,47 @@
+# istiod (control plane) — настроен для k3d + Cilium.
+#
+# Ключевой момент: Istio CNI ОТКЛЮЧЁН.
+# Вместо него используется init-контейнер (istio-init), который правит iptables
+# до запуска основного контейнера. Это избегает конфликта с Cilium CNI.
+
+pilot:
+  autoscaleEnabled: false
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+global:
+  proxy:
+    # Sidecar ждёт пока приложение не стартует (важно для Spring Boot с долгим init)
+    holdApplicationUntilProxyStarts: true
+    logLevel: warning
+    resources:
+      requests:
+        cpu: 10m
+        memory: 40Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+
+meshConfig:
+  # Логи доступа для всех sidecar (удобно при отладке)
+  accessLogFile: /dev/stdout
+
+  defaultConfig:
+    # Метрики circuit breaker и retry попадут в Prometheus
+    proxyStatsMatcher:
+      inclusionRegexps:
+        - ".*circuit_breakers.*"
+        - ".*upstream_rq_retry.*"
+        - ".*upstream_rq_pending.*"
+        - ".*outlier_detection.*"
+        - ".*upstream_rq_time.*"
+
+  outboundTrafficPolicy:
+    # Разрешить исходящий трафик на адреса вне mesh (Kafka, PostgreSQL)
+    mode: ALLOW_ANY

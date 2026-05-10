@@ -1,0 +1,94 @@
+# Envoy Rate Limit Service (envoyproxy/ratelimit).
+# Принимает gRPC-запросы от Envoy sidecar/gateway:
+#   "Разрешить ли этот запрос по дескриптору X?"
+# Отвечает: OK или OVER_LIMIT.
+# Счётчики хранит в Valkey (Redis-совместимый).
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ratelimit
+  labels:
+    istio-injection: enabled    # sidecar нужен чтобы Gateway мог обратиться по mTLS
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ratelimit
+  namespace: ratelimit
+  labels:
+    app: ratelimit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ratelimit
+  template:
+    metadata:
+      labels:
+        app: ratelimit
+    spec:
+      containers:
+        - name: ratelimit
+          image: envoyproxy/ratelimit:v1.4.0
+          command: ["/bin/ratelimit"]
+          env:
+            - name: LOG_LEVEL
+              value: "warn"
+            - name: REDIS_SOCKET_TYPE
+              value: "tcp"
+            - name: REDIS_URL
+              value: "valkey-primary.ratelimit.svc.cluster.local:6379"
+            - name: USE_STATSD
+              value: "false"
+            - name: RUNTIME_ROOT
+              value: /data
+            - name: RUNTIME_SUBDIRECTORY
+              value: ratelimit
+            - name: RUNTIME_WATCH_ROOT
+              value: "false"
+            - name: RUNTIME_IGNOREDOTFILES
+              value: "true"
+          ports:
+            - containerPort: 8080    # HTTP debug
+              name: http-debug
+            - containerPort: 8081    # gRPC — Envoy вызывает этот порт
+              name: grpc
+          volumeMounts:
+            - name: config
+              mountPath: /data/ratelimit/config
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+      volumes:
+        - name: config
+          configMap:
+            name: ratelimit-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ratelimit
+  namespace: ratelimit
+  labels:
+    app: ratelimit
+spec:
+  selector:
+    app: ratelimit
+  ports:
+    - name: http-debug
+      port: 8080
+      targetPort: 8080
+    - name: grpc
+      port: 8081
+      targetPort: 8081

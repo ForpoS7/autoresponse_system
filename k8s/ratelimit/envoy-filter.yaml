@@ -1,0 +1,115 @@
+# EnvoyFilter — "патч" поверх Envoy конфигурации Istio.
+# Istio управляет Envoy через xDS протокол, а EnvoyFilter позволяет
+# вставлять произвольные Envoy-фильтры туда куда Istio API не дотягивается.
+#
+# Два патча:
+#   1. filter-ratelimit      — добавляет HTTP-фильтр ratelimit к IngressGateway
+#   2. filter-ratelimit-svc  — добавляет rate_limit actions к виртуальным хостам
+
+---
+# Патч 1: вставить HTTP-фильтр ratelimit ПЕРЕД router-фильтром
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: filter-ratelimit
+  namespace: istio-system
+spec:
+  workloadSelector:
+    labels:
+      istio: ingress    # применить только к IngressGateway Pod-у
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.router
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.filters.http.ratelimit
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.ratelimit.v3.RateLimit
+            domain: autoresponse-ratelimit      # должен совпадать с ratelimit-config.yaml
+            failure_mode_deny: false            # пропускать трафик если ratelimit service недоступен
+            rate_limit_service:
+              grpc_service:
+                envoy_grpc:
+                  # Формат: outbound|PORT|SUBSET|FQDN
+                  cluster_name: outbound|8081||ratelimit.ratelimit.svc.cluster.local
+                timeout: 10s
+              transport_api_version: V3
+
+---
+# Патч 2: добавить rate_limit actions к виртуальным хостам IngressGateway
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: filter-ratelimit-svc
+  namespace: istio-system
+spec:
+  workloadSelector:
+    labels:
+      istio: ingress
+  configPatches:
+    # Правило 1: лимит по IP-адресу клиента
+    - applyTo: VIRTUAL_HOST
+      match:
+        context: GATEWAY
+        routeConfiguration:
+          vhost:
+            name: "*:80"
+            route:
+              action: ANY
+      patch:
+        operation: MERGE
+        value:
+          rate_limits:
+            # remote_address → дескриптор "remote_address" в ratelimit-config.yaml
+            - actions:
+                - remote_address: {}
+
+    # Правило 2: лимит по пути /auth
+    - applyTo: HTTP_ROUTE
+      match:
+        context: GATEWAY
+        routeConfiguration:
+          vhost:
+            name: "*:80"
+            route:
+              name: auth-routes
+      patch:
+        operation: MERGE
+        value:
+          route:
+            rate_limits:
+              - actions:
+                  - header_value_match:
+                      descriptor_value: is_auth_path
+                      headers:
+                        - name: ":path"
+                          prefix_match: "/auth"
+
+    # Правило 3: лимит по пути /api
+    - applyTo: HTTP_ROUTE
+      match:
+        context: GATEWAY
+        routeConfiguration:
+          vhost:
+            name: "*:80"
+            route:
+              name: aggregate-routes
+      patch:
+        operation: MERGE
+        value:
+          route:
+            rate_limits:
+              - actions:
+                  - header_value_match:
+                      descriptor_value: is_api_path
+                      headers:
+                        - name: ":path"
+                          prefix_match: "/api"
