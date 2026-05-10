@@ -33,7 +33,7 @@ flowchart TD
     subgraph EXTERNAL["Внешние системы"]
         direction TB
         HH["🌐 HH.ru\nПлатформа поиска работы"]
-        OLLAMA["🤖 Ollama\nqwen2.5:7b (локальный LLM)"]
+        OLLAMA["🤖 Ollama\nqwen3.5:7b (локальный LLM)"]
     end
 
     subgraph OUT_OF_SCOPE["Вне автоматизации"]

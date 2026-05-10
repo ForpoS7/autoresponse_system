@@ -5,34 +5,39 @@
 
 ## 5.1 auth_service (Go)
 
+> Единственное место, где живёт JWT-логика. nginx вызывает `/validate` через
+> `auth_request` перед каждым `/api/*` запросом и получает обратно `X-User-ID`.
+
 ```mermaid
 flowchart LR
     subgraph AUTH_SVC["auth_service · Go 1.22 · :8082"]
         direction TB
-        R["router\ngorilla/mux\nPOST /register\nPOST /login\nPOST /validate\nGET  /health"]
-        H["AuthHandler\nDecodeJSON → validate\n→ Service → JWT"]
+        R["router · gorilla/mux\nPOST /register\nPOST /login\nPOST /validate  ← auth_request от nginx\nGET  /health"]
+        H["AuthHandler\nDecodeJSON → validate\n→ Service → JWT\nvalidate: пишет X-User-ID в ответ"]
         S["AuthService\nHashPassword (bcrypt)\nCheckPassword\nGenerateToken (HS256)\nValidateToken"]
         REPO["UserRepository\nGetByUsername()\nCreate(user)"]
     end
 
-    CLIENT["nginx / другие сервисы"]
+    NGINX["nginx\nauth_request /validate"]
     PG_U["PostgreSQL\ntable: users"]
 
-    CLIENT -->|"HTTP JSON"| R
+    NGINX -->|"Authorization: Bearer …"| R
     R --> H
     H --> S
     S --> REPO
-    REPO -->|"lib/pq\nSELECT/INSERT"| PG_U
-    S -->|"JWT HS256\nBearer token"| H
+    REPO -->|"lib/pq SELECT/INSERT"| PG_U
+    H -->|"200 + X-User-ID: {id}\nили 401"| NGINX
 ```
 
 ## 5.2 hh_aggregate_service (Java / Spring Boot)
+
+> JWT не валидирует — nginx уже проверил. Читает `X-User-ID` из заголовка запроса.
 
 ```mermaid
 flowchart LR
     subgraph AGGR_SVC["hh_aggregate_service · Java 21 · :8080"]
         direction TB
-        FILTER["JwtAuthFilter\n(Spring Security)\nValidateToken → SecurityContext"]
+        HDR["X-User-ID header\n(проставляет nginx после auth_request)\nизвлекается в каждом контроллере"]
         CTRL_V["VacancyController\nGET /api/vacancies\nparams: query, page"]
         CTRL_T["TokenController\nGET  /api/hh-token\nPOST /api/hh-token"]
         CTRL_S["SchedulerController\nPOST /api/scheduler/start\nGET  /api/scheduler/status"]
@@ -49,15 +54,15 @@ flowchart LR
         REPO_V["VacancyRepository\nJPA · vacancies table"]
     end
 
-    NGINX["nginx :8080"]
+    NGINX["nginx :8080\n(X-User-ID уже проставлен)"]
     KAFKA_A["Kafka\n→ vacancies.parsed\n→ token.updated\n← parse.requested"]
     PG_A["PostgreSQL\nhh_tokens · vacancies"]
     HH_A["HH.ru"]
 
-    NGINX --> FILTER
-    FILTER --> CTRL_V
-    FILTER --> CTRL_T
-    FILTER --> CTRL_S
+    NGINX --> HDR
+    HDR --> CTRL_V
+    HDR --> CTRL_T
+    HDR --> CTRL_S
 
     CTRL_V --> PW_SVC
     CTRL_T --> TOKEN_SVC
@@ -87,12 +92,12 @@ flowchart LR
         direction TB
         CONS["KafkaConsumer\nkafka-python\n← vacancy_input\ngroup: generate-group"]
         PROC["LetterProcessor\nПарсинг JSON\nформирование prompt"]
-        OLLAMA_CL["OllamaClient\nPOST /api/generate\nmodel: qwen2.5:7b\nstream: false"]
+        OLLAMA_CL["OllamaClient\nPOST /api/generate\nmodel: qwen3.5:7b\nstream: false"]
         PROD["KafkaProducer\nkafka-python\n→ vacancy_output\n{correlationId, letter}"]
     end
 
     KAFKA_G["Kafka\n← vacancy_input\n→ vacancy_output"]
-    OLLAMA_G["Ollama :11434\nqwen2.5:7b"]
+    OLLAMA_G["Ollama :11434\nqwen3.5:7b"]
 
     KAFKA_G -->|"JSON\n{corrId,title,company,requirements}"| CONS
     CONS --> PROC

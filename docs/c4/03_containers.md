@@ -48,9 +48,14 @@ flowchart TD
 
     %% ─── Связи: User → Gateway → Services ────────────────────────
     USER -->|"HTTP REST"| NGINX
-    NGINX -->|"/auth/*\n:8082"| AUTH
-    NGINX -->|"/api/vacancies\n/api/hh-token\n/api/scheduler\n:8080"| AGGR
-    NGINX -->|"/api/autoapply\n/api/archive\n:8081"| APPLY
+
+    %% auth_request: nginx валидирует JWT через auth_service до проксирования
+    %% auth_service возвращает X-User-ID → nginx передаёт в бэкенд
+    %% сервисы JWT не трогают — только читают заголовок X-User-ID
+    NGINX -->|"auth_request /validate\n(каждый /api/* запрос)"| AUTH
+    NGINX -->|"/auth/register\n/auth/login\n:8082"| AUTH
+    NGINX -->|"/api/vacancies\n/api/hh-token\n/api/scheduler\nX-User-ID header\n:8080"| AGGR
+    NGINX -->|"/api/autoapply\n/api/archive\nX-User-ID header\n:8081"| APPLY
 
     %% ─── Services → Kafka ─────────────────────────────────────────
     APPLY -->|"→ parse.requested\n→ vacancy_input"| KAFKA
